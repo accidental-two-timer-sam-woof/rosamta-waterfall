@@ -24,7 +24,23 @@ Dotbot支援許多第三方外掛功能(plugins)：
 | 軟體套件管理 | dotbot-brew, dotbot-apt, dotbot-yum, |
 | 作業系統和應用程式設定 | crontab-dotbot, dotbot-firefox, |
 
+### 外掛的使用時機與範例
 
+當部署需求除了建立設定檔連結，還包含安裝軟體等工作時，可以使用第三方外掛擴充功能。
+
+例如，在 macOS 或 Linux 上，可透過 `dotbot-brew` 使用 Homebrew 安裝套件。先取得外掛，再於部署清單載入：
+
+```yaml
+- plugins:
+    - dotbot-brew/
+
+- brew:
+    - git
+```
+
+其中，`dotbot-brew/` 是已下載的外掛目錄；`brew` 是外掛新增的動作，這裡表示透過 Homebrew 安裝 Git。只有寫入設定並不會立即安裝，還需要執行 Dotbot 部署指令。
+
+參考資料：https://github.com/d12frosted/dotbot-brew
 
 Dotbot的主要定位是部署工具。使用者先準備設定檔及部署清單，再交由Dotbot依序建立連結、建立目錄或執行指令。
 
