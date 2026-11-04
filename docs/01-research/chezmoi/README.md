@@ -358,7 +358,7 @@ flowchart LR
 
 #### 缺什麼
 
-1. **語言本身的限制變成使用者的負擔**。`text/template` 的條件是 eager evaluation，沒有短路求值、不能自訂函式、不能取得子 template 的輸出、只能「完成或失敗」（[#865]、[#1474]、[#1619]、[#4569]）。想用 early return 取代巢狀條件，最後是用 sentinel error 實作 `abortEmpty`（[#4569]）
+1. **語言本身的限制變成使用者的負擔**。`text/template` 只有 `and`、`or` 會在結果確定後停止求值，其他函式的參數一律先全部求值，所以 `ternary`、`default` 不能用來保護可能失敗的運算式；此外不能自訂函式、不能取得子 template 的輸出、只能「完成或失敗」（[#865]、[#1474]、[#1619]、[#4569]）。想用 early return 取代巢狀條件，最後是用 sentinel error 實作 `abortEmpty`（[#4569]）
 2. **細節陷阱多**。研究者實際踩過、各花了不少時間的四個陷阱：
    - `{{ template "x" . }}` 會多輸出一個換行
    - comment 遇到第一個 `*/` 就結束
