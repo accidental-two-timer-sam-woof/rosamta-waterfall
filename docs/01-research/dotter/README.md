@@ -50,6 +50,14 @@ Hostname 選擇是 fallback：只有指定的 local 設定檔不存在時，才�
 
 來源路徑與 includes 路徑依執行時的工作目錄解讀，不能假設一律相對於 TOML 所在目錄。一般做法是在 dotfiles repo 根目錄執行 Dotter。目標路徑另外支援 `~` 與環境變數展開。[入門文件][getting-started]、[設定實作][src-config]
 
+### 多份 repo 可以分別部署，但不會自動互相切換
+
+多份 dotfiles repo 可以放在不同目錄，分別進入各自的根目錄執行 `dotter deploy`。使用預設路徑時，每份 repo 讀取自己的 `.dotter/global.toml`、`.dotter/local.toml` 與 cache；切換工作目錄即可選擇這次部署採用哪份設定。[參數預設值][src-args]、[設定載入][src-config]
+
+部署 repo B 不會自動撤除 repo A 的輸出。若兩者管理不同目標，兩組輸出可以並存；若指向同一目標，B 可能因目標已存在或內容不符合自己的 cache 而略過。兩份獨立的 cache 不會共同協調該目標的歸屬，強制覆寫也不會同步更新另一份 repo 的追蹤狀態。[部署與撤除][src-deploy]、[建立與更新檢查][src-actions]
+
+若要用 B 完整取代 A，可先在 A 執行 `dotter undeploy`，確認撤除成功且沒有因衝突留下的輸出，再進入 B 部署。撤除依 A 的 cache 處理全部已追蹤輸出，不只處理與 B 重疊的檔案；兩次命令也不是同一筆交易，B 失敗時不會自動恢復 A。只想更換部分設定時，使用同一 repo 的 package 選取與 local 覆寫，通常比讓多份 repo 反覆接管相同目標更容易追蹤。[部署與撤除][src-deploy]、[Package 設定][packages]
+
 ## 3. 一份配色如何供兩個程式使用
 
 ```text
