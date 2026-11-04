@@ -17,7 +17,7 @@ Dotbot 是用來自動部署個人設定檔的工具，主要理念為輕量級�
 
 
 
-Dotbot 支援許多第三方外掛功能（ plugins ）：
+Dotbot 支援許多第三方外掛功能（plugins）：
 
 | 金鑰管理 | dotbot-age, dotbot-gitcrypt, |
 | --- | --- |
@@ -76,10 +76,10 @@ Dotbot 的主要定位是部署工具。使用者先準備設定檔及部署清�
       prefix: '.'
 ```
 
-上圖為 Dotbot 官方 README 中 Link 的範例。此範例展示 Dotbot 如何依照設定清單建立符號連結。
+上述程式碼為 Dotbot 官方 README 中 Link 的範例。此範例展示 Dotbot 如何依照設定清單建立符號連結。
 
 左側的路徑表示電腦上要建立連結的位置，path 表示來源檔案或目錄，通常放在 dotfiles repo 中。
-例如： ~/.vim: vim 表示在使用者家目錄建立 .vim 連結，指向 repo 內的 vim。
+例如：`~/.vim: vim` 表示在使用者家目錄建立 `.vim` 連結，指向 repo 內的 `vim`。
 
 | create: true | 允許建立連結所需的父目錄 |
 | --- | --- |
