@@ -330,29 +330,37 @@ sequenceDiagram
 
 ## 9. 循序圖 S4：清除舊輸出
 
+只檢查狀態檔有紀錄的舊目標，不刪除未受管理的檔案。
+本圖為計畫階段，尚未實際刪除檔案。
+
 ```mermaid
 sequenceDiagram
-    participant P as planner:Planner
-    participant F as fs:FileSystem
-    participant E as executor:Executor
-    P->>P: 比對目前有效輸出與受管理紀錄
-    Note over P,F: 只處理有狀態紀錄的舊目標，不掃描刪除其他檔案
-    P->>F: inspect(oldPath)
-    F-->>P: 目標存在與內容狀態
-    alt 舊檔已不存在
-        P->>P: 計畫移除舊紀錄，項目可完成
-    else 舊檔內容未被修改
-        P->>P: 計畫刪除舊檔與紀錄
-    else 舊檔已修改且明確同意刪除（conditional）
-        P->>P: 計畫刪除舊檔與紀錄
-    else 舊檔已修改
-        P->>P: 保留檔案與紀錄，附上原因
+    participant A as 套用服務
+    participant P as 計畫產生器
+    participant F as 檔案系統
+
+    A->>P: 規劃舊輸出清除
+
+    loop 每個舊目標
+        P->>F: 檢查檔案
+        F-->>P: 存在與否、內容是否修改
+
+        alt 檔案不存在
+            P-->>A: 移除紀錄
+        else 內容未修改
+            P-->>A: 刪除檔案與紀錄
+        else 已修改且同意刪除
+            P-->>A: 刪除檔案與紀錄
+        else 已修改且未同意刪除
+            P-->>A: 保留檔案與紀錄
+        end
     end
-    Note over P,E: 納入完整計畫，通過檢查後再交由 Executor 執行
 ```
 
-手動從 manifest 移除、停用、改目標路徑，都可能產生清除項目；「停止管理」指令則移除狀態紀錄並保留檔案，後續不清除它。
+圖中的回傳訊息代表計畫動作；整批檢查通過後才實際執行。
+刪除已修改檔案須使用者明確指定，此功能為 conditional。
 
+「停止管理」指令會移除狀態紀錄並保留檔案，因此該檔案不會進入後續清除流程。
 ## 10. 循序圖 S5：執行與整批回復
 
 前提：預檢通過、嚴格模式沒有阻擋，並已完成所有項目的處理決策。RecoveryManager 的快照保存方式是設計提案，不得把輸出內容寫入狀態檔。
