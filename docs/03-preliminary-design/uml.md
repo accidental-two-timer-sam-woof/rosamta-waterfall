@@ -444,38 +444,70 @@ sequenceDiagram
 
 ## 7. 循序圖 S3：受管理輸出的 drift 決策
 
-本圖是計畫階段的分析，不直接寫入。以完整管理輸出為範圍；未宣告的權限不列為 drift。
+本圖是計畫階段的分析，不直接寫入。以完整管理輸出為範圍；未宣告的權限不列為 drift。互動詢問為 conditional 功能，僅在明確啟用互動且 stdin 連接終端機時進行。
 
 ```mermaid
 sequenceDiagram
+    actor U as 使用者
+    participant C as cli:CLI
+    participant A as app:ApplyService
     participant P as planner:Planner
     participant F as fs:FileSystem
     participant S as state:StateStore
+
+    A->>P: 分析受管理輸出
     P->>S: load() 取得比較紀錄
     S-->>P: observedBaseline 與 desiredBaseline
     P->>F: inspect(path)
     F-->>P: 目前內容與屬性
-    P->>P: 比較目前、期望與兩份 baseline
+    P->>P: 比較目前、期望與 baseline
+    P-->>A: 分析結果
+
     alt 目前內容等於本次期望內容
-        P->>P: 目標不需重寫，計畫更新比較紀錄
-    else 沒有外部修改且期望未變（含先前已接受的內容）
-        P->>P: 不變，不立即覆寫先前接受的內容
-    else 沒有外部修改且期望已變（已納入 FR-DRF-008）
-        P->>P: 一般更新
-    else 有外部修改且與期望不同
+        A->>P: 計畫更新比較紀錄，不重寫內容
+    else 沒有外部修改且期望未變
+        A->>P: 計畫不變
+    else 沒有外部修改且期望已變
+        A->>P: 計畫一般更新
+    else 有 drift 衝突
         alt 嚴格模式
-            P->>P: 標記 drift 衝突，阻擋整批套用
-        else 明確指定接受
-            P->>P: 目標不變，計畫更新兩份 baseline
-        else 明確指定覆寫
-            P->>P: 計畫寫入本次期望內容
-        else 預設略過
-            P->>P: 保留目標與原狀態紀錄，下次重新判斷
+            A->>A: 標記整批不可套用
+        else 非嚴格模式
+            alt 已明確指定處理方式
+                A->>A: 使用指定的接受、覆寫或略過
+            else 明確啟用互動且 stdin 為終端機
+                A->>C: 顯示衝突並請求選擇
+                C->>U: 選擇覆寫、接受或略過
+                alt 使用者提供有效選擇
+                    U-->>C: 處理選擇
+                    C-->>A: 回傳選擇
+                else 未選擇或輸入結束
+                    C-->>A: 略過，不重複詢問
+                end
+            else 不符合互動條件
+                A->>A: 使用預設略過
+            end
+
+            alt 處理方式為接受
+                A->>P: 目標不變，計畫更新兩份 baseline
+            else 處理方式為覆寫
+                A->>P: 計畫寫入本次期望內容
+            else 處理方式為略過
+                A->>P: 保留目標與原狀態紀錄
+            end
         end
     end
 ```
 
-接受不修改來源目錄，且執行成功時記為完成。若先前接受後來源改變，但目標未再被外部修改，依一般更新處理（FR-DRF-008 為 conditional，本分支須隨交付範圍確認）。嚴格模式與明確接受／覆寫同時指定時，本圖保守遵循 FR-DRF-009 的「有任何 drift 衝突就不寫入」；組合參數的明確介面規則仍待定案，不把此設計解讀為新增 SRS。
+本圖描述單一輸出；有多個衝突時逐檔處理。嚴格模式一旦發現任何 drift 衝突，本次套用不得寫入任何輸出或狀態檔。
+
+接受不修改來源目錄，執行成功時記為完成。接受時 observedBaseline 記錄目前實際內容的比較資訊，desiredBaseline 記錄本次期望內容的比較資訊，不保存輸出原文。
+
+先前接受後，若來源改變但目標未再被外部修改，依一般更新處理；此分支對應 conditional 的 FR-DRF-008。互動詢問與無選擇時略過，分別對應 conditional 的 FR-DRF-010、011。
+
+圖中的「分析輸出」及「更新計畫」是責任描述，實際方法簽名於詳細設計時補充。所有計畫變更都不代表立即寫入，實際套用仍須通過整批檢查。
+
+本稿暫以「嚴格模式優先、已指定的處理方式優先於互動詢問」作為設計提案，須由組員確認，並非 SRS 已明定的組合選項規則。
 
 ## 8. 循序圖 S4：清除舊輸出
 
