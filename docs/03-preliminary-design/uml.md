@@ -608,7 +608,7 @@ sequenceDiagram
     I->>F: 檢查來源位置與既有本機設定
     alt 指定遠端且來源位置已有檔案
         I-->>U: 不修改既有資料，exit code = 1
-    else 位置可用
+    else 未指定遠端 repo，或來源位置沒有既有檔案
         alt 指定遠端 repo
             I->>G: cloneToStaging(repo)
             G-->>I: 成功或失敗
@@ -619,8 +619,8 @@ sequenceDiagram
             I->>F: 清理本次暫存來源（若有）
             I-->>U: repo 位址與原因，不建立來源及本機設定，不寫輸出
         else 來源準備成功
-            I->>F: 建立來源目錄，記錄來源位置
-            I->>F: 依名稱建立或合併本機設定
+            I->>F: 來源不存在時才建立，保留既有來源並記錄位置
+            I->>F: 以指定的標籤與欄位值建立或合併本機設定
             alt 指定只初始化（conditional）
                 I-->>U: 初始化完成，不寫目標與狀態檔
             else 執行第一次套用
