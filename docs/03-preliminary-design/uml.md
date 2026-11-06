@@ -78,6 +78,7 @@ Field 由 Module 宣告，Template 引用欄位值產生內容。Manifest 不另
 ```mermaid
 classDiagram
     direction TB
+    class Module
     class Profile
     class ProfileRule {
         +os : Optional
@@ -110,6 +111,8 @@ classDiagram
     ValueResolver ..> Profile : 讀取符合條件的覆寫
     ValueResolver ..> LocalSettings : 讀取本機覆寫
     ValueResolver ..> ResolvedValues : 產生
+    ValueResolver ..> Module : 讀取模組欄位值
+    ValueResolver ..> HostContext : 取得主機資訊
 ```
 
 解析順序固定為內建預設值 → 使用者模組 → Profile → 本機設定；後者優先，未指定欄位保留低層值。
