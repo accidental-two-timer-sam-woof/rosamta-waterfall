@@ -1,21 +1,4 @@
-# rosamta 初步設計：UML
-
-狀態：供組員審查的設計草稿。依據提供的 SRS 1.0；尚未與實作程式碼核對。本文件的服務名稱、方法及資料分工為設計建議，不是 SRS 已規定的實作。
-
-建議存放於 `docs/03-preliminary-design/uml.md`。GitHub 可直接將下列 Mermaid 區塊顯示為圖；實際排版仍需在目標 GitHub 頁面確認。
-
-## 1. 建模依據與範圍
-
-Royce（1970）的論文不是 UML 規範，也沒有規定應畫哪些 UML 圖。本文採用其提早進行初步設計、記錄設計、安排驗證並允許回饋修正的觀點，不將瀑布流程解讀為禁止回頭。高風險設計（整批回復、接受 drift 後的比較、平台路徑）應在實作前驗證。
-
-Valente 第 4 章將模型定位為需求與程式碼之間的溝通工具，區分類別圖的靜態結構與循序圖的執行情境。本文依此選擇 Class 與 Sequence 圖，不為了完整而加入沒有用途的圖種，也不把所有情境塞入同一張圖。
-
-參考資料：
-
-- Winston W. Royce. *Managing the Development of Large Software Systems*. IEEE WESCON, 1970. [論文掃描本](https://cpske.github.io/ISP/resources/Royce1970-Managing-the-Development-of-Large-Software-Systems.pdf)。
-- Marco Tulio Valente. *Software Engineering: A Modern Approach*, 2024，§4.2、§4.3、§4.5。[作者提供的第 4 章網路版](https://softengbook.org/chapter4)。本次查閱的是網路版，未逐頁核對 2024 年電子書版本。
-
-## 2. 類別圖 C1：設定資料模型
+## 1. 類別圖 C1：設定資料模型
 
 此圖表示解析與合併後的有效設定。內建輸出與使用者覆寫如何保存在檔案中，不由此圖決定。所有輸出共用一份來源目錄 manifest；模組只放欄位，不持有輸出宣告。
 
@@ -47,6 +30,8 @@ classDiagram
     }
     class Template {
         +path : String
+        +targetProgram : String
+        +targetFormatVersion : String
     }
     Manifest "1" *-- "0..*" OutputDefinition : 宣告
     Module "1" *-- "0..*" Field : 包含
@@ -56,7 +41,9 @@ classDiagram
 
 `sourceKind` 區分範本與原樣複製；每個輸出只選其中一種來源。原樣複製必須保留位元組，不經範本處理。權限未宣告時，不變更既有權限；Windows 不套用 POSIX 權限位元。型別與版本相容資訊可在詳細設計補充；conditional 的版本檢查及依賴檢查不應被當成已確定交付。
 
-## 3. 類別圖 C2：Profile 與欄位解析
+Template 的程式與設定格式版本欄位對應 essential 的 FR-TPL-002，內建範本必填；這與 conditional 的「模組格式版本及其相容檢查」不同。圖中的公開屬性代表可讀資料契約，不預先要求實作為可任意修改的 public 欄位。
+
+## 2. 類別圖 C2：Profile 與欄位解析
 
 重複出現的類別僅為跨圖參照。條件內是 AND，同一輸出的多個啟用條件是 OR；沒有被啟用的輸出不得寫入。
 
@@ -81,7 +68,7 @@ classDiagram
         +fieldOverrides : Map
     }
     class ValueResolver {
-        +resolve(config, host) ResolvedValues
+        +resolve(config, host, localSettings) ResolvedValues
     }
     class ResolvedValues {
         +values : Map
@@ -97,9 +84,10 @@ classDiagram
     ValueResolver ..> ResolvedValues : 產生
 ```
 
-解析順序固定為內建預設值 → 使用者模組 → Profile → 本機設定；後者優先，未指定欄位保留低層值。同層重複設定是錯誤，不能以檔名或列出順序決定。`provenance` 記錄值的層級與來源位置，支援查詢。
+解析順序固定為內建預設值 → 使用者模組 → Profile → 本機設定；後者優先，未指定欄位保留低層值。
+同層重複設定是錯誤，不能以檔名或列出順序決定。`provenance` 記錄值的層級與來源位置，支援查詢。
 
-## 4. 類別圖 C3：套用資料模型
+## 3. 類別圖 C3：套用資料模型
 
 ```mermaid
 classDiagram
@@ -126,8 +114,8 @@ classDiagram
     class ManagedOutputRecord {
         +outputName : String
         +targetPath : String
-        +observedBaseline : Metadata
-        +desiredBaseline : Metadata
+        +observedBaseline : ComparisonMetadata
+        +desiredBaseline : ComparisonMetadata
     }
     class OutputDefinition
     ApplyPlan "1" *-- "0..*" PlanItem : 包含
@@ -141,7 +129,9 @@ classDiagram
 
 兩份 baseline 是本文件的設計提案：observedBaseline 用於偵測目標後續的外部修改，desiredBaseline 用於判斷來源產生的期望內容是否改變。它們只存比較用中繼資料，不存輸出原文，也不在此指定演算法。這個分工支援「接受 drift 後，來源未改時不立刻覆寫；來源改變後依一般更新處理」。執行期產生內容不得序列化進狀態檔。
 
-## 5. 類別圖 C4：服務責任
+ComparisonMetadata 是值型別，記錄內容指紋及需追蹤的宣告屬性；不是檔案原文。權限未宣告及 Windows 權限位元不得納入 drift 判斷。接受時 observedBaseline 記錄目前實際內容、desiredBaseline 記錄本次來源產生的內容；兩者可以不同。任何目標內容已符合期望的項目仍為完成，必要時更新紀錄，不重寫內容。
+
+## 4. 類別圖 C4：服務責任
 
 服務皆為同一 CLI 程式內部的邏輯分工，不表示常駐服務或網路服務。此圖只列主要依賴。
 
@@ -162,7 +152,7 @@ classDiagram
         +build(config, values, state) ApplyPlan
     }
     class PreflightChecker {
-        +validate(context, plan) Diagnostics
+        +validate(context, optionalPlan) Diagnostics
     }
     class Executor {
         +execute(plan) ApplyReport
@@ -174,13 +164,13 @@ classDiagram
         +commit()
     }
     class StateStore {
-        +load() StateFile
+        +load() StateLoadResult
         +saveAtomically(state)
     }
     class FileSystem {
         +inspect(path)
         +backup(path)
-        +apply(item)
+        +applyAtomically(item)
     }
     class InitializationService {
         +initialize(request)
@@ -209,6 +199,7 @@ classDiagram
     ApplyService ..> Executor
     ApplyService ..> StateStore
     Planner ..> FileSystem
+    Planner ..> StateStore
     Executor ..> FileSystem
     Executor ..> RecoveryManager
     Executor ..> StateStore
@@ -216,6 +207,7 @@ classDiagram
     RecoveryManager ..> StateStore
     InitializationService ..> GitClient
     InitializationService ..> ApplyService
+    InitializationService ..> FileSystem
     ManifestService ..> StateStore
     ManifestService ..> FileSystem
     QueryService ..> ConfigLoader
@@ -224,7 +216,9 @@ classDiagram
 
 ConfigLoader 必須保留診斷來源位置；無法解析的設定可直接回傳診斷，不能假設一定能先建立完整計畫。寫回 manifest 等使用者文件時，ManifestService 必須保留註解與格式。停止管理除了移除宣告，也要移除狀態紀錄，才能避免下次清除目標檔。
 
-## 6. 循序圖 S1：預覽與套用入口
+StateLoadResult 區分成功、檔案不存在及無法讀取／損毀。不存在回傳空紀錄；損毀是阻擋錯誤，不可當空紀錄繼續，更不可覆寫原狀態檔。圖只畫主要依賴，不列所有資料值型別。呼叫可回傳具來源位置的診斷；方法簽名是正常成功結果的摘要。
+
+## 5. 循序圖 S1：預覽與套用入口
 
 ```mermaid
 sequenceDiagram
@@ -239,20 +233,23 @@ sequenceDiagram
     U->>A: 預覽或套用要求（經 CLI）
     A->>C: load()
     C-->>A: 有效設定或診斷
-    A->>V: resolve(config, host)
-    V-->>A: 最終值、來源或診斷
     A->>S: load()
-    S-->>A: 既有狀態
-    A->>P: build(config, values, state)
-    P-->>A: 計畫或診斷
-    A->>K: validate(context, plan)
+    S-->>A: 有效紀錄／不存在／損毀診斷
+    opt 設定可解析
+        A->>V: resolve(config, host, localSettings)
+        V-->>A: 最終值與來源，或同層衝突診斷
+    end
+    opt 值可解析、狀態可用且具備產生計畫的資料
+        A->>P: build(config, values, state)
+        P-->>A: 計畫或診斷
+    end
+    A->>K: validate(context, optionalPlan)
     K-->>A: 彙整可取得的檢查問題
     alt 任一阻擋問題
         A-->>U: 回報問題，不寫入；套用 exit code = 1
     else 可預覽或執行
         alt 預覽
             A-->>U: 計畫、差異、drift 與預期處理
-            Note over A,S: 不寫入目標或狀態檔，不執行使用者外部命令
         else 嚴格套用且有 drift 衝突
             A-->>U: 不寫入目標或狀態檔，exit code = 1
         else 套用允許執行
@@ -265,7 +262,9 @@ sequenceDiagram
 
 此圖的呼叫表示概念順序；錯誤資料不能傳入不適用的後續步驟。實作應在可繼續分析時收集所有可辨識問題，而非遇到第一項就停止診斷。計畫產生可先驗證渲染必要的欄位，再計算內容；所有阻擋檢查必須在任何輸出寫入前完成。
 
-## 7. 循序圖 S2：未受管理檔案的接管
+預覽不寫入目標與狀態檔，也不執行使用者定義的外部命令。預檢清單包括 manifest 語法與未知屬性、重複輸出名、平台目標缺失、home 範圍、欄位型別／範圍／必填、同層衝突，以及正規化後的目標碰撞（包含不區分大小寫的檔案系統）。若交付版本相容功能，亦檢查版本。不存在的狀態檔視為空紀錄，不產生舊檔清除計畫；損毀則預檢失敗。依賴檢查的缺少／無法確認只是非阻擋回報。
+
+## 6. 循序圖 S2：未受管理檔案的接管
 
 前提：完整計畫已通過預檢與嚴格模式檢查；此項目目標存在，但狀態檔沒有紀錄。此圖聚焦完整管理輸出，其他擁有程度另依其規則處理。
 
@@ -281,10 +280,18 @@ sequenceDiagram
         Note over E,F: 必要的宣告權限仍依平台規則處理
     else 已宣告接管
         E->>R: capture(path)
-        E->>F: backup(path)
-        F-->>E: 備份位置
-        E->>F: apply(item)
-        E->>E: 暫存新紀錄與備份位置
+        R-->>E: 成功或錯誤
+        opt 保存成功
+            E->>F: backup(path)
+            F-->>E: 備份位置或錯誤
+            opt 備份成功
+                E->>F: applyAtomically(item)
+                F-->>E: 成功或錯誤
+                opt 寫入成功
+                    E->>E: 暫存新紀錄與備份位置
+                end
+            end
+        end
     else 未宣告接管
         E->>E: 保留檔案，記錄原因，不新增狀態紀錄
     end
@@ -293,7 +300,9 @@ sequenceDiagram
 
 互動接管屬 conditional；若納入，須在決策階段取得使用者選擇，且只有明確啟用互動並且 stdin 為終端機時才詢問。接管備份與回復快照用途不同，不應混為同一個生命週期。
 
-## 8. 循序圖 S3：受管理輸出的 drift 決策
+相同內容直接納管的檔案沒有特殊清除豁免：後續停用或移除時仍依 S4 清除（SRS 1.1 的 FR-MAN-021）。任何權限變更也須先 capture，並納入 S5 的回復範圍。capture／backup 失敗時不得繼續寫入；先回報執行錯誤並進入 S5，不能只靠圖外說明而無條件執行下一步。
+
+## 7. 循序圖 S3：受管理輸出的 drift 決策
 
 本圖是計畫階段的分析，不直接寫入。以完整管理輸出為範圍；未宣告的權限不列為 drift。
 
@@ -302,7 +311,7 @@ sequenceDiagram
     participant P as planner:Planner
     participant F as fs:FileSystem
     participant S as state:StateStore
-    P->>S: 取得該輸出的比較紀錄
+    P->>S: load() 取得比較紀錄
     S-->>P: observedBaseline 與 desiredBaseline
     P->>F: inspect(path)
     F-->>P: 目前內容與屬性
@@ -311,7 +320,7 @@ sequenceDiagram
         P->>P: 目標不需重寫，計畫更新比較紀錄
     else 沒有外部修改且期望未變（含先前已接受的內容）
         P->>P: 不變，不立即覆寫先前接受的內容
-    else 沒有外部修改且期望已變
+    else 沒有外部修改且期望已變（已納入 FR-DRF-008）
         P->>P: 一般更新
     else 有外部修改且與期望不同
         alt 嚴格模式
@@ -326,42 +335,37 @@ sequenceDiagram
     end
 ```
 
-接受不修改來源目錄，且執行成功時記為完成。若先前接受後來源改變，但目標未再被外部修改，依一般更新處理。嚴格模式與明確接受／覆寫同時指定時，本稿採嚴格模式優先；SRS 未明示優先順序，列為待確認。
+接受不修改來源目錄，且執行成功時記為完成。若先前接受後來源改變，但目標未再被外部修改，依一般更新處理（FR-DRF-008 為 conditional，本分支須隨交付範圍確認）。嚴格模式與明確接受／覆寫同時指定時，本圖保守遵循 FR-DRF-009 的「有任何 drift 衝突就不寫入」；組合參數的明確介面規則仍待定案，不把此設計解讀為新增 SRS。
 
-## 9. 循序圖 S4：清除舊輸出
+## 8. 循序圖 S4：清除舊輸出
 
-只檢查狀態檔有紀錄的舊目標，不刪除未受管理的檔案。
-本圖為計畫階段，尚未實際刪除檔案。
+此圖只產生清除計畫。舊目標是已移除、已停用或已改路徑的受管理輸出；只比較狀態檔有紀錄的路徑。
 
 ```mermaid
 sequenceDiagram
-    participant A as 套用服務
-    participant P as 計畫產生器
-    participant F as 檔案系統
-
-    A->>P: 規劃舊輸出清除
-
-    loop 每個舊目標
-        P->>F: 檢查檔案
+    participant A as app:ApplyService
+    participant P as planner:Planner
+    participant F as fs:FileSystem
+    A->>P: build(config, values, state)
+    loop 每個受管理的舊目標
+        P->>F: inspect(oldPath)
         F-->>P: 存在與否、內容是否修改
-
         alt 檔案不存在
-            P-->>A: 移除紀錄
+            P->>P: 加入移除紀錄項目
         else 內容未修改
-            P-->>A: 刪除檔案與紀錄
+            P->>P: 加入刪除項目
         else 已修改且同意刪除
-            P-->>A: 刪除檔案與紀錄
+            P->>P: 加入刪除項目
         else 已修改且未同意刪除
-            P-->>A: 保留檔案與紀錄
+            P->>P: 加入保留項目及原因
         end
     end
+    P-->>A: 含清除項目的完整計畫
 ```
 
-圖中的回傳訊息代表計畫動作；整批檢查通過後才實際執行。
-刪除已修改檔案須使用者明確指定，此功能為 conditional。
+檢查通過後依 S5 執行，Executor 不參與本圖的計畫階段。刪除時同步移除紀錄；保留時檔案與原紀錄都不變；檔案已不存在則只移除紀錄並記完成。明確刪除已修改舊檔為 conditional。手動從 manifest 移除、停用、改目標路徑，都可能產生清除項目；「停止管理」指令則移除狀態紀錄並保留檔案，後續不清除它。
 
-「停止管理」指令會移除狀態紀錄並保留檔案，因此該檔案不會進入後續清除流程。
-## 10. 循序圖 S5：執行與整批回復
+## 9. 循序圖 S5：執行與整批回復
 
 前提：預檢通過、嚴格模式沒有阻擋，並已完成所有項目的處理決策。RecoveryManager 的快照保存方式是設計提案，不得把輸出內容寫入狀態檔。
 
@@ -374,6 +378,10 @@ sequenceDiagram
     participant S as state:StateStore
     A->>E: execute(plan)
     E->>R: begin() 保存狀態檔回復資訊
+    R-->>E: 成功或錯誤
+    break begin 失敗
+        E-->>A: 不操作目標與原狀態檔，exit code = 1
+    end
     loop 尚有項目且未發生執行錯誤
         alt 保留項目
             E->>E: 保留目標與原紀錄，記錄原因
@@ -383,7 +391,7 @@ sequenceDiagram
             E->>R: capture(path)
             R-->>E: 成功或錯誤
             opt 保存成功
-                E->>F: apply(item)
+                E->>F: applyAtomically(item)
                 F-->>E: 成功或錯誤
                 opt 目標操作成功
                     E->>E: 暫存狀態變更
@@ -404,13 +412,16 @@ sequenceDiagram
     else 執行成功
         E->>R: commit()
         E-->>A: 逐項完成或保留及備份位置
-        Note over A,E: 全完成或空計畫為 0；完成與保留並存為 2；只有保留為 1
     end
 ```
 
 begin、capture、backup、目標操作與狀態提交的錯誤都必須走失敗處理；回復需盡力處理所有受影響項目，不能在第一個回復錯誤時就遺漏其他項目。不可因 drift 或未宣告接管而觸發回復。此模型沒有承諾多檔案同時原子可見，也沒有自行增加斷電後自動復原的需求。
 
-## 11. 循序圖 S6：新機器初始化
+applyAtomically 對內容寫入先準備完整暫存檔再以平台支援的原子替換提交，保證程序中止時單一輸出只有完整舊內容或完整新內容（REL-001）；替換既有檔時須維持未宣告的權限。狀態檔同樣原子寫入（REL-002）。commit 只表示釋放回復資訊，不能另作未受保護的目標變更；快照清理失敗不得誤報輸出已回復。begin 失敗時不操作輸出，僅清理已建立的本次暫存資源；rollback 不可使用未成功保存的快照覆寫原狀態。
+
+exit code：全完成或空計畫為 0；完成與保留並存為 2；只有保留為 1。依 SRS 1.1，嚴格模式下若沒有 drift 衝突，但有「未宣告接管」的保留項目，仍依此計算，可為 2；不可把嚴格模式一律視為全有或全無。回復完全成功才聲明所有目標已恢復；否則逐項列出失敗路徑與原因，均為 1。
+
+## 10. 循序圖 S6：新機器初始化
 
 此圖聚焦新機器路徑；既有本機設定的合併另依 FR-INI-008，未明確指定的值及文件格式必須保留。
 
@@ -449,9 +460,10 @@ sequenceDiagram
     end
 ```
 
-clone 的暫存與成功後移入是為滿足取得失敗時不得留下來源目錄的設計建議。此圖不宣稱首次套用失敗時會撤銷整個初始化；SRS 只明定輸出與狀態的回復。首次取得來源以外的操作不得連線，不進行 git 同步或安裝套件。
+clone 的暫存與成功後移入是為滿足取得失敗時不得留下來源目錄的設計建議。
+此圖不宣稱首次套用失敗時會撤銷整個初始化；SRS 只明定輸出與狀態的回復。
 
-## 12. 需求追溯與審查重點
+## 11. 需求追溯與審查重點
 
 | 圖 | 主要需求 | 審查重點 |
 | --- | --- | --- |
@@ -466,15 +478,22 @@ clone 的暫存與成功後移入是為滿足取得失敗時不得留下來源�
 | S5 | FR-APL-001–009、REL-001–002 | 寫入、刪除、權限與狀態皆可回復；正確 exit code |
 | S6 | FR-INI-001–011、IF-013 | clone 失敗不留來源；首次套用重用一般套用流程 |
 
-本文件是核心 UML 集合，並非宣稱覆蓋全部 152 條需求。conditional 的依賴檢查若納入，應另設 DependencyChecker：預覽與套用均回報存在／缺少／無法確認，附受影響的輸出、模組、範本，但不阻擋寫入、不改變 exit code，且不安裝任何依賴。optional 的指定欄位管理亦需另補相應設計。
+上表為關聯需求索引，不代表每張圖完整覆蓋整個編號區間。FR-TPL-002 已在 C1 補入必要元資料；REL-003／004 在 S1 區分狀態不存在與損毀；SRS 1.1 的 FR-APL-007 與 FR-MAN-021 由 S5 與 S2／S4 的補充規則明確約束。IF-001 的功能分期不由本 UML 提升：只有交付範圍內的功能才需實作對應子指令。
 
-## 13. 詳細設計前須定案
+本文件是核心 UML 集合，並非覆蓋全部 152 條需求。
+conditional 的依賴檢查若納入，應另設 DependencyChecker：預覽與套用均回報存在／缺少／無法確認，附受影響的輸出、模組、範本，但不阻擋寫入、不改變 exit code，且不安裝任何依賴。optional 的指定欄位管理亦需另補相應設計。
 
-1. 嚴格模式和明確接受／覆寫同時指定時的優先順序。本稿採嚴格模式優先，須與組員確認。
+## 12. 詳細設計前須定案
+
+1. 嚴格模式和明確接受／覆寫同時指定時的優先順序。本稿採嚴格模式優先。
 2. 接管備份的目錄、唯一命名、保留期限，以及批次失敗後是否保留；回報必須提供可用的備份位置。
 3. 比較中繼資料的實際格式與演算法；兩份 baseline 提案應以「接受後重跑不變」「來源改後一般更新」「目標再改後偵測 drift」三組案例驗證。
 4. 如何處理預檢後檔案被外部程式修改，以及多個 rosamta 同時執行。不能只因先前預檢通過便假設目標未變。
 5. 路徑正規化、大小寫與指向 home 外的符號連結如何檢查，確保寫入範圍符合 SRS。
 6. 內建輸出停止管理後的持久化表示，避免下次合併內建宣告時重新出現。
 
+## 13. 驗證狀態
 
+已對照附件 SRS 1.1 的核心規則與跨圖名稱，並以 Mermaid 11 實際解析及渲染全部 10 個圖塊，全部成功。
+
+本次審查以 Royce 的初步設計及設計文件原則、Valente 的類別關係及物件訊息表示方式為準。兩份著作並未共同定義一種可機械檢查的「瀑布 UML 格式」，亦不能據此宣稱本文件通過正式認證。2024 年電子書未另行取得，Valente 依作者網路章節核對。
