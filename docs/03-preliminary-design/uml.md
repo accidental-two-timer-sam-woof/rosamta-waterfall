@@ -43,6 +43,31 @@ classDiagram
 
 Template 的程式與設定格式版本欄位對應 essential 的 FR-TPL-002，內建範本必填；這與 conditional 的「模組格式版本及其相容檢查」不同。圖中的公開屬性代表可讀資料契約，不預先要求實作為可任意修改的 public 欄位。
 
+### C1 成員說明
+
+下表的泛型寫法是設計說明，不是選定實作語言。圖內 Map、Optional 等簡寫的具體意義以下表為準。
+
+| 類別／成員 | 型別 | 用途與限制 |
+| --- | --- | --- |
+| Manifest.outputs | OutputDefinition[] | 合併內建宣告與使用者覆寫後的有效輸出清單；輸出名稱不可重複。 |
+| OutputDefinition.name | String | 輸出的唯一名稱，供啟用、查詢及管理操作使用。 |
+| OutputDefinition.sourceKind | String | 區分 template（範本）與 verbatim（原樣複製）；這兩個值是設計命名建議。 |
+| OutputDefinition.sourcePath | String | 範本或複製來源的位置；來源目錄內的路徑相對於來源目錄解讀，內建資源如何定位留給詳細設計。 |
+| OutputDefinition.targetPaths | Map<Platform, String> | key 為 Linux、Windows、macOS；value 為該平台尚未展開的目標路徑字串。每個平台最多一個值；不要求每個輸出都有三平台路徑，但啟用時必須有目前平台的路徑。 |
+| OutputDefinition.ownership | String | 完整管理為預設；只在不存在時建立為 conditional；只管理指定欄位為 optional，不表示三者都已決定實作。 |
+| OutputDefinition.permissions | Optional<PermissionBits> | 可不宣告的 POSIX 權限位元，如 0600；非任意字串。未宣告時不變更既有權限，Windows 不變更 POSIX 權限位元。實際編碼留待詳細設計。 |
+| OutputDefinition.takeover | Boolean | 是否允許在既有未受管理檔案內容不同時，先備份再接管；不是略過備份或忽略 drift 的開關。 |
+| Module.name | String | 模組識別名稱，例如 theme、font。 |
+| Module.fields | Field[] | 模組宣告的欄位集合；模組不宣告輸出。 |
+| Field.name | String | 模組內的欄位名稱；跨模組參照需搭配模組識別，例如 theme.foreground。 |
+| Field.type | String | 對應 SRS 3.4.1 的欄位型別；不是選定語言的任意型別名稱。 |
+| Field.required | Boolean | 是否必填；適用該宣告的驗證不通過時阻擋套用。 |
+| Field.constraint | Optional<FieldConstraint> | 型別允許的範圍或格式限制，例如最小／最大值、色碼格式、列舉選項。圖中 Any 是尚未固定結構的簡寫。 |
+| Field.value | FieldValue | 模組提供的欄位值；尚不代表四層解析後的最終值。FieldValue 須符合欄位型別。 |
+| Template.path | String | 範本資源位置；使用者範本可取代特定輸出的內建範本。 |
+| Template.targetProgram | String | 範本對應的目標程式名稱；內建範本必填。 |
+| Template.targetFormatVersion | String | 目標程式設定格式版本；不同於模組格式相容版本，內建範本必填。 |
+
 ## 2. 類別圖 C2：Profile 與欄位解析
 
 重複出現的類別僅為跨圖參照。條件內是 AND，同一輸出的多個啟用條件是 OR；沒有被啟用的輸出不得寫入。
