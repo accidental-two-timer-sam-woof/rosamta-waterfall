@@ -101,3 +101,8 @@ SRS 假設同一組目標同時只有一個 rosamta 程序在套用，且目標�
 | 查詢驗收與分期 | FR-QRY-004 的驗收文字同時引用模組查詢及 `conditional` 的欄位查詢。04 依正式優先序規劃兩種情境，由團隊確認並透過 SRS 修訂釐清欄位查詢延後時的驗收方式 |
 
 05 須定義設定、範本及執行介面，並完成 UML §12 的五項設計，包括接管備份的命名及保留規則、比較資料的格式與演算法、預檢後重檢與多程序協調、平台路徑與連結檢查，以及內建輸出停止管理的持久化表示。06 依 SRS 的需求編號與驗收條件編寫案例，納入本文件的分支及故障情境。
+
+## 7. 參考資料
+
+- Winston W. Royce, *Managing the Development of Large Software Systems*, Proceedings of IEEE WESCON, August 1970, pp. 1–9。[論文重印版](https://www.praxisframework.org/files/royce1970.pdf)
+- Marco Tulio Valente, *Software Engineering: A Modern Approach*, 2024, ISBN 978-65-01-26467-7。引用作者公開網路版第 4、5、8 章。[作者網站](https://softengbook.org/)
