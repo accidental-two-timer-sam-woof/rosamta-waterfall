@@ -118,6 +118,34 @@ classDiagram
 解析順序固定為內建預設值 → 使用者模組 → Profile → 本機設定；後者優先，未指定欄位保留低層值。
 同層重複設定是錯誤，不能以檔名或列出順序決定。`provenance` 記錄值的層級與來源位置，支援查詢。
 
+### C2 成員與方法說明
+
+`Platform` 表示 Linux、Windows、macOS；`FieldRef` 表示模組與欄位的識別，例如 `theme.foreground`；`FieldValue` 為符合該欄位型別的值。
+
+| 類別／成員 | 型別 | 用途 |
+| --- | --- | --- |
+| Profile | 包含 `ProfileRule` 的容器 | 保存啟用輸出及覆寫欄位的條件規則；圖中以組合關係表示。 |
+| ProfileRule.os | `Optional<Platform>` | 限制作業系統；未指定則不限制。 |
+| ProfileRule.hostname | `Optional<String>` | 限制主機名稱；未指定則不限制。 |
+| ProfileRule.tags | `String[]` | 主機必須具備的標籤；同一條件內全部符合才成立。 |
+| ProfileRule.fieldOverrides | `Map<FieldRef, FieldValue>` | 條件成立時提供的 Profile 層欄位覆寫。 |
+| HostContext.os | `Platform` | 目前主機的作業系統。 |
+| HostContext.hostname | `String` | 目前主機名稱。 |
+| HostContext.homeDirectory | `String` | 使用者 home 的絕對路徑，供路徑展開與驗證。 |
+| LocalSettings.tags | `String[]` | 本機指定的標籤，供 Profile 比對。 |
+| LocalSettings.fieldOverrides | `Map<FieldRef, FieldValue>` | 本機設定層的欄位覆寫，優先序最高。 |
+| ResolvedValues.values | `Map<FieldRef, FieldValue>` | 四層解析後的最終欄位值。 |
+| ResolvedValues.provenance | `Map<FieldRef, ValueSource>` | 最終值的來源層級、檔案及可用的位置資訊。 |
+
+`ValueSource` 是來源描述資料，其具體結構於詳細設計時決定。
+
+| 方法 | 參數 | 回傳與用途 |
+| --- | --- | --- |
+| ProfileRule.matches(host, localSettings) | `host: HostContext`；`localSettings: LocalSettings` | 回傳 `Boolean`，比對作業系統、主機名稱及本機標籤，判斷條件是否成立。 |
+| ValueResolver.resolve(config, host, localSettings) | `config: EffectiveConfig`，包含模組與 Profile 的有效設定；`host: HostContext`；`localSettings: LocalSettings` | 成功時回傳 `ResolvedValues`，依四層優先序解析值並保留來源；同層重複設定時回報診斷。 |
+
+圖中的方法簽名只列成功回傳型別；診斷結果的具體表示方式於詳細設計時決定。
+
 ## 3. 類別圖 C3：套用資料模型
 
 ```mermaid
@@ -132,8 +160,8 @@ classDiagram
     }
     class ApplyReport {
         +exitCode : Integer
-        +errors : List
-        +rollbackFailures : List
+        +errors : ExecutionError[]
+        +rollbackFailures : RecoveryFailure[]
     }
     class ItemResult {
         +targetPath : String
@@ -160,7 +188,33 @@ classDiagram
 
 兩份 baseline 是本文件的設計提案：observedBaseline 用於偵測目標後續的外部修改，desiredBaseline 用於判斷來源產生的期望內容是否改變。它們只存比較用中繼資料，不存輸出原文，也不在此指定演算法。這個分工支援「接受 drift 後，來源未改時不立刻覆寫；來源改變後依一般更新處理」。執行期產生內容不得序列化進狀態檔。
 
-ComparisonMetadata 是值型別，記錄內容指紋及需追蹤的宣告屬性；不是檔案原文。權限未宣告及 Windows 權限位元不得納入 drift 判斷。接受時 observedBaseline 記錄目前實際內容、desiredBaseline 記錄本次來源產生的內容；兩者可以不同。任何目標內容已符合期望的項目仍為完成，必要時更新紀錄，不重寫內容。
+ComparisonMetadata 是值型別，記錄內容指紋及需追蹤的宣告屬性；不是檔案原文。權限未宣告及 Windows 權限位元不得納入 drift 判斷。接受時 observedBaseline 記錄目前實際內容、desiredBaseline 記錄本次來源產生的內容；兩者可以不同。目標內容已符合期望時，不重寫內容；若仍有已宣告且適用於目前平台的權限變更，仍須完成該變更，才能將項目記為完成。必要時更新狀態紀錄。
+
+### C3 成員說明
+
+| 類別／成員 | 型別 | 用途 |
+| --- | --- | --- |
+| ApplyPlan | 包含 `PlanItem` 的容器 | 保存本次套用的完整計畫；圖中以組合關係表示。 |
+| PlanItem.targetPath | `String` | 本項目解析後的目標路徑。 |
+| PlanItem.action | `String` | 建立、更新、刪除或不變。 |
+| PlanItem.disposition | `String` | 本次處理決策，例如執行、略過或接受；與目標動作分開。 |
+| PlanItem.reason | `String` | 處理決策的原因；保留項目必須說明原因。 |
+| ApplyReport.exitCode | `Integer` | 套用的回傳碼：0、2 或 1，依 SRS 的結果規則計算。 |
+| ApplyReport.errors | `ExecutionError[]` | 原始執行錯誤的項目、目標路徑與原因。 |
+| ApplyReport.rollbackFailures | `RecoveryFailure[]` | 整批回復時，所有未能恢復的目標路徑與原因。 |
+| ItemResult.targetPath | `String` | 回報項目的目標路徑。 |
+| ItemResult.action | `String` | 該項目的建立、更新、刪除或不變動作。 |
+| ItemResult.status | `String` | 正常結束時為完成或保留；執行錯誤與整批回復另外說明。 |
+| ItemResult.reason | `String` | 保留原因；完成項目可使用空字串。 |
+| StateFile | 包含 `ManagedOutputRecord` 的容器 | 保存受管理輸出的紀錄，不保存輸出原文。 |
+| ManagedOutputRecord.outputName | `String` | 受管理輸出的識別名稱。 |
+| ManagedOutputRecord.targetPath | `String` | 已記錄的實際目標路徑，供 drift 判斷與舊輸出清除。 |
+| ManagedOutputRecord.observedBaseline | `ComparisonMetadata` | 上次記錄的實際目標比較資訊，用於偵測後續外部修改。 |
+| ManagedOutputRecord.desiredBaseline | `ComparisonMetadata` | 上次處理時的期望內容比較資訊，用於判斷來源是否改變。 |
+
+`ExecutionError`、`RecoveryFailure` 是錯誤描述資料；`ComparisonMetadata` 是不含輸出原文的比較資料，其具體結構於詳細設計時決定。
+
+`ApplyReport` 透過組合關係包含逐項的 `ItemResult`。C3 未宣告成員方法，因此沒有方法參數需要補充；計畫產生、執行及狀態儲存由 C4 的服務負責。
 
 ## 4. 類別圖 C4：服務責任
 
@@ -248,6 +302,61 @@ classDiagram
 ConfigLoader 必須保留診斷來源位置；無法解析的設定可直接回傳診斷，不能假設一定能先建立完整計畫。寫回 manifest 等使用者文件時，ManifestService 必須保留註解與格式。停止管理除了移除宣告，也要移除狀態紀錄，才能避免下次清除目標檔。
 
 StateLoadResult 區分成功、檔案不存在及無法讀取／損毀。不存在回傳空紀錄；損毀是阻擋錯誤，不可當空紀錄繼續，更不可覆寫原狀態檔。圖只畫主要依賴，不列所有資料值型別。呼叫可回傳具來源位置的診斷；方法簽名是正常成功結果的摘要。
+
+### C4 方法與參數說明
+
+本圖只列方法，未列服務內部屬性。方法簽名以正常結果為摘要；執行失敗時須回傳或傳遞錯誤，具體錯誤表示方式於詳細設計時決定。
+
+| 類別／方法 | 參數 | 回傳與用途 |
+| --- | --- | --- |
+| CLI.run(args) | `args: String[]`，命令列參數 | 回傳 `Integer` exit code；解析子指令與選項，呼叫對應服務並顯示結果。 |
+| ApplyService.run(request) | `request: ApplyRequest`，包含預覽／套用、模式及衝突處理選項 | 回傳 `ApplyReport`；協調設定載入、值解析、計畫、預檢與執行。預覽不得寫入目標或狀態檔。 |
+| ConfigLoader.load() | 無顯式參數；來源位置由初始化紀錄及執行環境取得 | 成功時回傳 `EffectiveConfig`；載入來源設定與內建資源，合併輸出覆寫並保留診斷來源位置。 |
+| Planner.build(config, values, state) | `config: EffectiveConfig`；`values: ResolvedValues`；`state: StateFile` | 回傳 `ApplyPlan`；計算期望內容、建立／更新／刪除／不變動作、衝突與清除項目，不寫入目標或狀態檔。 |
+| PreflightChecker.validate(context, optionalPlan) | `context: AnalysisContext`，包含可取得的設定、主機資訊及診斷；`optionalPlan: Optional<ApplyPlan>` | 回傳 `Diagnostics`；檢查寫入前的阻擋問題。無法建立完整計畫時，仍可檢查不依賴計畫的部分。 |
+| Executor.execute(plan) | `plan: ApplyPlan`，已通過預檢與模式檢查的計畫 | 回傳 `ApplyReport`；執行項目並提交狀態，發生執行錯誤時協調整批回復。 |
+| RecoveryManager.begin() | 無顯式參數；使用本批次上下文 | 建立回復上下文並保存原狀態檔資訊；失敗時不得開始變更目標。 |
+| RecoveryManager.capture(path) | `path: String`，將被變更的目標路徑 | 保存套用前的內容、權限及存在與否；失敗時不得繼續變更該目標。回復資料不寫入狀態檔。 |
+| RecoveryManager.rollback() | 無顯式參數；使用已保存的批次快照 | 回傳 `RecoveryReport`；恢復本批受影響的目標與狀態檔，列出所有未能恢復的路徑與原因。 |
+| RecoveryManager.commit() | 無顯式參數；使用目前批次上下文 | 結束成功批次並釋放回復暫存資源，不再變更輸出內容。暫存清理問題須與套用或回復失敗區分。 |
+| StateStore.load() | 無顯式參數；使用已設定的狀態檔位置 | 回傳 `StateLoadResult`；區分有效紀錄、不存在、無法讀取或損毀，不得將損毀當成空紀錄。 |
+| StateStore.saveAtomically(state) | `state: StateFile`，待提交的新狀態 | 原子提交狀態；程序中止時，狀態檔維持完整舊內容或完整新內容。失敗時傳遞錯誤。 |
+| FileSystem.inspect(path) | `path: String`，待檢查路徑 | 成功時回傳 `FileInspection`，包含存在與否、內容及屬性資訊；讀取錯誤不可當成檔案不存在。 |
+| FileSystem.backup(path) | `path: String`，待接管的既有檔案 | 成功時回傳備份位置 `String`；在覆寫前保存原檔，失敗時不得繼續接管。 |
+| FileSystem.applyAtomically(item) | `item: PlanItem`，已具備執行所需內容與屬性的項目 | 執行目標建立、更新、刪除或適用的宣告權限變更；內容寫入須保有完整舊／新內容，不重寫不變項目的內容。 |
+| InitializationService.initialize(request) | `request: InitializationRequest`，包含遠端來源、具名本機值及適用的初始化選項 | 回傳 `InitializationResult`；準備來源、建立或合併本機設定、記錄來源位置，並依選項執行首次套用。 |
+| GitClient.cloneToStaging(url) | `url: String`，使用者指定的遠端 repo 位址 | 成功時回傳暫存來源目錄位置 `String`；失敗時清理本次暫存並回報原因。不負責後續 pull、push 或合併。 |
+| ManifestService.add(path) | `path: String`，home 內既有檔案路徑 | 回傳 `OperationResult`；複製檔案到來源目錄並新增原樣複製輸出，不刪除原目標檔。 |
+| ManifestService.update(name, properties) | `name: String`，輸出名稱；`properties: OutputPropertyPatch`，指定要修改的屬性 | 回傳 `OperationResult`；只更新指定屬性，保留其他內容、註解及格式。 |
+| ManifestService.forget(name) | `name: String`，輸出名稱 | 回傳 `OperationResult`；移除輸出宣告及其狀態紀錄，不刪除或修改目標檔。 |
+| QueryService.findOutputs(moduleOrField) | `moduleOrField: ModuleRef 或 FieldRef` | 回傳 `OutputSummary[]`，列出引用該模組或欄位的輸出；模組查詢為 essential，欄位查詢為 conditional。 |
+| QueryService.describeOutput(nameOrPath) | `nameOrPath: String`，輸出名稱或目標路徑 | 回傳 `OutputDescription`，列出範本或複製來源，以及透過範本追溯的模組與欄位。 |
+| QueryService.describeValue(field) | `field: FieldRef`，模組與欄位的識別 | 回傳 `ResolvedValueDescription`，包含最終值、來源層級及來源檔案。 |
+
+ValueResolver 的方法與參數已於 C2 說明；此圖只參照該類別，不重複列出。
+
+### C4 資料型別說明
+
+以下為服務間傳遞的概念資料，不代表新增設定檔格式；具體欄位結構於詳細設計時決定。
+
+| 型別 | 說明 |
+| --- | --- |
+| EffectiveConfig | 合併後的有效設定，包含輸出宣告、模組、範本與 Profile。 |
+| ApplyRequest | 本次預覽或套用的選項；不表示所有 conditional 功能都已決定交付。 |
+| AnalysisContext | 可取得的設定、解析值、主機資訊、狀態載入結果及累積診斷。 |
+| Diagnostics | 檢查問題集合，提供來源位置、原因與可用的修正提示。 |
+| StateLoadResult | 狀態載入結果，區分成功、不存在與阻擋錯誤。 |
+| FileInspection | 檔案存在與否、內容比較所需資料及適用屬性。 |
+| RecoveryReport | 整批回復結果，以及未能恢復的路徑與原因。 |
+| InitializationRequest | 初始化輸入，包括來源及具名本機設定。 |
+| InitializationResult | 初始化結果、錯誤，以及有執行首次套用時的套用回報。 |
+| OutputPropertyPatch | 只包含本次指定修改的輸出屬性；未指定的屬性保持原值。 |
+| OperationResult | 管理操作的成功結果或錯誤資訊。 |
+| OutputSummary | 輸出名稱、目前平台目標路徑與啟用狀態等查詢摘要。 |
+| OutputDescription | 輸出來源及引用的模組、欄位資訊。 |
+| ResolvedValueDescription | 最終欄位值與其來源描述。 |
+
+PlanItem 的期望內容或執行期資源參照在 C3 中尚未展開，詳細設計須補齊其與 Executor 的傳遞契約；輸出原文不得因此被寫入 StateFile。
 
 ## 5. 循序圖 S1：預覽與套用入口
 
