@@ -148,7 +148,7 @@ rosamta 第一版提供以下功能，摘要見 2.2 節，正式需求見 3.2 �
 | --- | --- | --- |
 | [R1] | IEEE Std 830-1998, *IEEE Recommended Practice for Software Requirements Specifications* | 章節架構、需求的撰寫原則與優先序分級 |
 | [R2] | [前期研究：chezmoi](../01-research/chezmoi.md) | 候選需求 US-1–8、FR-1–15、NFR-1–11 |
-| [R3] | [前期研究：Dotter](../01-research/dotter/README.md) | 候選需求 DOT-01–10 |
+| [R3] | [前期研究：Dotter](../01-research/dotter.md) | 候選需求 DOT-01–10 |
 | [R4] | [前期研究：dotbot](../01-research/dotbot.md) | 範圍邊界、平台差異、目標路徑已有檔案時的處理 |
 | [R5] | [rosamta 專案說明](../../README.md) | 三個核心概念與內建模組規劃 |
 | [R6] | [貢獻指南](../../CONTRIBUTING.md) | 文件撰寫規範與修改流程 |
@@ -1091,7 +1091,7 @@ dotbot 研究沒有編號的候選需求，下表依研究結尾「對本組專�
 
 ## 附錄 B：決策紀錄
 
-研究階段的兩份候選需求（[chezmoi](../01-research/chezmoi.md) §7.3、[Dotter](../01-research/dotter/README.md) §9）有重疊與互相矛盾之處，[dotbot](../01-research/dotbot.md) 則補充了範圍與平台的考量。本附錄記錄撰寫第 3 節前做出的決定；第 3 節的需求以這裡為準，被合併或不採用的候選需求也在這裡交代原因。
+研究階段的兩份候選需求（[chezmoi](../01-research/chezmoi.md) §7.3、[Dotter](../01-research/dotter.md) §9）有重疊與互相矛盾之處，[dotbot](../01-research/dotbot.md) 則補充了範圍與平台的考量。本附錄記錄撰寫第 3 節前做出的決定；第 3 節的需求以這裡為準，被合併或不採用的候選需求也在這裡交代原因。
 
 ### B-1 輸出型態
 

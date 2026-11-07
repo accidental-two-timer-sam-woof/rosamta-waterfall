@@ -255,7 +255,7 @@ Hooks 包含 pre-deploy、post-deploy、pre-undeploy、post-undeploy。Windows �
 
 ## 8. rosamta 可以沿用什麼，還需要補什麼
 
-rosamta 的 [README](../../../README.md) 將 Module、Template、Profile 列為核心概念，目前仍是設計方向。
+rosamta 的 [README](../../README.md) 將 Module、Template、Profile 列為核心概念，目前仍是設計方向。
 
 | rosamta 概念 | Dotter 已提供的能力 | rosamta 需要具體定義的部分 |
 | --- | --- | --- |
