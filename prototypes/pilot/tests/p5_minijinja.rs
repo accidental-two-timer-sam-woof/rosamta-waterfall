@@ -2,7 +2,7 @@
 //!
 //! One test per MiniJinja row of the probe table in 05 §2.3 (04 §4 row 2,
 //! FR-QRY-002–004, USE-003, FR-PLN-005), plus the trailing-newline setting
-//! that §2.3 relies on.
+//! that §2.3 relies on and the template metadata comment of §5.9.
 
 use std::collections::BTreeSet;
 
@@ -243,4 +243,41 @@ fn trailing_newline_is_kept_only_when_configured() {
         env.get_template("t").unwrap().render(context! {}).unwrap(),
         "x\n"
     );
+}
+
+/// 05 §5.9: template metadata written as a leading `{#- rosamta ... -#}`
+/// comment renders as nothing, drops the newline after it, adds no
+/// references, and leaves error line numbers pointing at the file's lines.
+#[test]
+fn metadata_comment_is_invisible_and_keeps_line_numbers() {
+    let header = "{#- rosamta\nprogram = \"ghostty\"\nformat_version = \"1.1\"\n[requires]\ntheme = 1\n-#}\n";
+    let mut env = env();
+    env.set_syntax(
+        SyntaxConfig::builder()
+            .keep_trailing_newline(true)
+            .build()
+            .unwrap(),
+    );
+
+    env.add_template_owned("ok", format!("{header}fg = {{{{ theme.foreground }}}}\n"))
+        .unwrap();
+    assert_eq!(
+        env.get_template("ok")
+            .unwrap()
+            .render(context! { theme => theme() })
+            .unwrap(),
+        "fg = #d0d0d0\n"
+    );
+    assert_eq!(refs(&env, "ok"), set(&["theme.foreground"]));
+
+    // Line 7 of the file: six header lines, then the line below.
+    env.add_template_owned("bad", format!("{header}x = {{{{ theme.forground }}}}\n"))
+        .unwrap();
+    let err = env
+        .get_template("bad")
+        .unwrap()
+        .render(context! { theme => theme() })
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::UndefinedError);
+    assert_eq!(err.line(), Some(7));
 }
