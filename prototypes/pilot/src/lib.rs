@@ -4,5 +4,6 @@
 //! evidence. The implementation does not reuse this code.
 
 pub mod atomic;
+pub mod bound;
 pub mod payload;
 pub mod platform;
