@@ -150,3 +150,78 @@ USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱
 - 靜態比對找到的錯誤欄位沒有行號，須另外定位。
 
 是否開放 `include` 也留給 §4 決定。開放時，靜態分析須自行展開被載入的範本。
+
+## 7. 平台假設清單
+
+本節列出設計依賴、而 Rust 標準函式庫不保證的作業系統行為。每項假設以 `ASM-NN` 編號，列出官方文件依據、文件保證的範圍，以及 pilot 結果（`prototypes/pilot/`）。§6 的演算法只依賴本節列出的行為；06 為每個 `ASM-NN` 安排測試情境（§13）。
+
+pilot 結果分三種：
+
+- 通過：官方文件有保證，pilot 在三平台的結果也相符。
+- 有條件：pilot 在三平台都相符，但相關行為官方文件沒有寫明，或須由設計另外確保某個前提。條件寫在「保證範圍與條件」欄。
+- 不可行：這個做法無法滿足需求，須改變設計或修訂 SRS（04 §3.3 末段）。
+
+本版沒有「不可行」的項目。P4、P5 驗證的是選定套件的行為，不屬於平台假設，結果見 §2.2、§2.3；兩者在三平台都通過。
+
+### 7.1 驗證環境
+
+證據來自 pilot workflow 的 CI run 42634818704，P1–P5 與發佈檢查全部通過。runner 映像檔固定版本；正式支援的平台版本由 06 決定（PORT-001）。
+
+| 環境 | 作業系統 | 測試目錄的檔案系統 | 執行身分 |
+| --- | --- | --- | --- |
+| ubuntu-24.04 | kernel 7.0.0-1017-azure | ext4 | uid 1001，非 root |
+| macos-15 | macOS 15.8.2（24H232）、arm64 | APFS | uid 501，非 root |
+| windows-2025 | Windows Server 2025 build 26100 | NTFS | 新建的標準使用者，未提權；開發人員模式開啟與關閉各跑一次 |
+| 本機（補充） | Arch Linux、kernel 7.2.14 | btrfs | 一般使用者 |
+
+Windows 的開發人員模式以登錄值 `AllowDevelopmentWithoutDevLicense` 切換，不需重新開機就生效（見 ASM-13 的結果）。runner 預設以已提權的管理員身分執行，所以 pilot 另建只屬於 Users 群組的帳號來跑測試。本機結果只作補充，不當作基準。
+
+### 7.2 檔案替換
+
+| 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
+| --- | --- | --- | --- | --- |
+| ASM-01 | Linux 與 macOS 上，同一目錄內的 `rename` 以一次操作取代目標；程序在任何時間點被終止，目標都是完整的舊檔或新檔 | POSIX `rename`：取代期間名稱為 new 的目錄項目持續可見，且指向原本的 new 或 old | 只涵蓋程序終止，不涵蓋斷電與系統當機。macOS 的 `fsync` 不要求磁碟清空快取（須用 `F_FULLFSYNC`），REL-001、REL-002 也只要求程序終止的情境 | 通過。P2 在 Linux、macOS 各終止 100 次，輸出 1 MiB 與狀態檔 4 KiB 都沒有損毀或消失 |
+| ASM-02 | Windows 上，`MoveFileExW(MOVEFILE_REPLACE_EXISTING \| MOVEFILE_WRITE_THROUGH)` 以一次操作取代目標 | `MoveFileExW` 文件說明會取代既有檔案，`MOVEFILE_WRITE_THROUGH` 等到移動寫入磁碟才返回；文件沒有說明是否為原子操作 | 依 pilot 在本機 NTFS 的結果。取代後的檔案使用暫存檔的安全描述元，也就是目錄繼承的 ACL，不保留原檔的 ACL。`ReplaceFileW` 會保留原檔屬性，但程序被終止後目標可能消失，不採用 | 有條件。兩個 Windows job 各終止 100 次，沒有損毀或消失。同一 run 中，`ReplaceFileW` 在兩個 job 共有 7 次目標消失 |
+| ASM-03 | Linux 與 macOS 上，以 `O_CREAT \| O_EXCL` 和模式 `0600` 建立的暫存檔，建立當下就不允許其他帳號存取 | POSIX `open`：新檔的權限位元取自 mode 參數，再由 umask 移除位元 | umask 只會移除權限，不會增加，所以權限不會比 `0600` 寬。Windows 的暫存檔沿用目錄繼承的 ACL，保護方式在 §6 定義，以 06 的 A13 驗證 | 通過。P2 在 Linux、macOS 留下的暫存檔與替換後的目標都是 `0600` |
+
+### 7.3 不跟隨連結與操作綁定
+
+| 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
+| --- | --- | --- | --- | --- |
+| ASM-04 | 檔案身分可由 handle 取得並比較：Linux 與 macOS 用 `st_dev` 加 `st_ino`，Windows 用 volume 序號加 128 位元的 file ID | POSIX `<sys/stat.h>`：`st_ino` 與 `st_dev` 合起來在系統內唯一識別一個檔案。`FILE_ID_INFO` 文件：file ID 在同一 volume 內識別檔案 | 檔案刪除後編號可能被重複使用，所以只在同一批次內、對仍存在或剛確認過的檔案比較。網路檔案系統不在驗證範圍 | 通過。P1、P3 都用身分比較偵測替換，所有成功的替換都被偵測到 |
+| ASM-05 | Linux 與 macOS 上，從 home 以 `openat(O_NOFOLLOW \| O_DIRECTORY)` 逐層開啟目錄，遇到符號連結就失敗；之後以目錄 fd 為基準的 `openat`、`renameat`、`unlinkat`、`linkat` 和 `fstatat(AT_SYMLINK_NOFOLLOW)`，都作用在該 fd 對應的目錄 | POSIX `open`：`O_NOFOLLOW` 遇到符號連結以 `ELOOP` 失敗；`O_DIRECTORY` 遇到非目錄以 `ENOTDIR` 失敗；相對路徑以 fd 對應的目錄為基準 | home 本身的路徑不在此範圍，由 §6 的正規化規則處理 | 通過。預檢後替換父目錄或上層目錄的 24 個案例，在 Linux、macOS 都被拒絕；P3 讀取連結時以 `ELOOP` 失敗，不會讀到所指檔案 |
+| ASM-06 | Linux 與 macOS 上，持有目錄 fd 不能阻止其他程序改名或搬移該目錄。設計因此在操作後重新走訪路徑；若路徑已不通往持有的目錄，就經同一個 fd 復原 | POSIX `rename`：目錄正被其他程序使用時，是否以 `EBUSY` 失敗由實作決定；Linux 與 macOS 不會因目錄已被開啟而拒絕改名 | DC-002 在 Unix 的保證範圍：寫入不會落在替代的目錄或連結指向的位置。但若外部程序把原目錄整個搬到 home 外，本批寫入會短暫出現在搬出去的目錄中，重檢後隨即復原 | 有條件。最後一次檢查後替換的 24 個案例，Linux、macOS 的建立、更新、刪除都已復原，快照都判定失效；其中搬出 home 的 6 個寫入案例，寫入曾短暫出現在 home 外。另一個程序持續替換父目錄時跑 300 輪，沒有違反任何檢查條件 |
+| ASM-07 | Linux 與 macOS 沒有以 handle 刪除或改名檔案的操作，核對檔案身分到 `unlinkat`、`renameat` 之間仍有空窗 | POSIX `unlinkat`、`renameat` 只接受名稱 | 這個空窗內的替換無法事先阻止，只能靠操作後的重檢發現（ASM-06）。§8 在這個空窗設同步點，由 06 驗證 | 有條件。pilot 的同步點不在這個空窗內；持續替換的 300 輪沒有違反檢查條件 |
+| ASM-08 | Windows 上，以具資料存取權（`FILE_LIST_DIRECTORY`）、不含 `FILE_SHARE_DELETE` 的 handle 持有目錄時，其他程序無法改名或刪除該目錄。在這些目錄內的寫入可以用路徑操作 | `CreateFileW` 文件：沒有 `FILE_SHARE_DELETE` 時，其他程序以 delete 存取權開啟會失敗，而 delete 存取權同時涵蓋刪除與改名 | 文件沒有說明哪些存取權會參與共用檢查。pilot 發現只有 `FILE_READ_ATTRIBUTES` 和 `SYNCHRONIZE` 的 handle 擋不住改名，所以須加上 `FILE_LIST_DIRECTORY` | 有條件。兩個 Windows job 中，最後一次檢查後的 48 次替換都被擋下（sharing violation），操作照計畫完成。持續替換時，外部程序的嘗試被擋下 225–242 次 |
+| ASM-09 | Windows 上，以 `FILE_FLAG_OPEN_REPARSE_POINT` 開啟會取得 reparse point 本身，不跟隨；開啟目錄後以 `GetFinalPathNameByHandleW` 核對最終路徑 | `CreateFileW` 文件：指定此旗標時不做一般的 reparse point 處理，直接開啟 reparse point | 符號連結、junction 以及其他 reparse point 一律視為連結。路徑中的目錄是 reparse point 時拒絕操作；目標是 reparse point 時，只有 `IO_REPARSE_TAG_SYMLINK` 可以接管（§6） | 通過。預檢後換成 junction 的案例都被拒絕；P3 讀取連結時開到的是連結本身，判定類型不符，不會讀到所指檔案 |
+| ASM-10 | Windows 上，以 handle 設定 `FileDispositionInfo` 刪除檔案，刪除的就是核對過身分的那個檔案 | `FILE_DISPOSITION_INFO` 文件：handle 關閉時刪除該檔案 | 須以 `DELETE` 存取權開啟 | 通過。P1 的刪除案例照計畫完成 |
+
+### 7.4 符號連結的接管與回復
+
+原規劃以 `symlink_metadata` 判斷連結、只備份連結本身，回復時重建連結。pilot 確認：Windows 標準使用者在未開啟開發人員模式時無法建立符號連結（ASM-13），DC-001 要求標準使用者也能套用，所以回復時重建連結的做法在這個條件下不可行。改用下列做法，整個過程都不建立新的符號連結：
+
+1. 備份：核對目標仍是預檢所見的連結後，在備份目錄為連結本身建立 hard link（ASM-11）。目標路徑上仍是原本的連結。
+2. 接管：以 ASM-01、ASM-02 的方式，一次把連結換成一般檔案（ASM-12）。目標路徑上不是原本的連結，就是完整的新檔案。備份目錄裡的名稱成為這個連結唯一的名稱。
+3. 回復：核對目標仍是本批寫入的檔案後，把備份 rename 回目標路徑，取代本批寫入的檔案。
+
+回復後目標路徑上是原本的連結：檔案身分、連結內容都與接管前相同，並不是新建的連結，因此不違反 DC-003。
+
+| 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
+| --- | --- | --- | --- | --- |
+| ASM-11 | 可以為符號連結本身建立 hard link，不跟隨到所指檔案。Linux 與 macOS 用不帶 `AT_SYMLINK_FOLLOW` 的 `linkat`；Windows 先以 `FILE_FLAG_OPEN_REPARSE_POINT` 開啟連結，再以 `NtSetInformationFile(FileLinkInformation)` 建立，`RootDirectory` 指定持有的備份目錄 handle | POSIX `linkat`：未設 `AT_SYMLINK_FOLLOW` 且 path1 是符號連結時，為符號連結本身建立 hard link。`FILE_LINK_INFORMATION` 文件：`RootDirectory` 為新連結所在目錄的 handle，此時 `FileName` 只寫檔名；設定時不需要特定存取權 | hard link 不能跨檔案系統（POSIX `EXDEV`），所以備份目錄須與目標在同一個檔案系統。Windows 上路徑中的 mount point 也是 reparse point，已依 ASM-09 拒絕。Linux 與 macOS 的 home 內可能有掛載點，跨檔案系統時如何處理由 §6 決定。Linux 開啟 `fs.protected_hardlinks` 時，連結須屬於目前的使用者 | 有條件。兩個平台、兩種所指位置（home 內與 home 外）的備份，身分都與原連結相同。Linux 以 `/dev/shm` 測試跨檔案系統，以 `EXDEV` 失敗，原連結不變，備份目錄沒有留下檔案；macOS runner 沒有第二個檔案系統，略過 |
+| ASM-12 | rename 作用在連結本身：目標位置是連結時，被取代的是連結，所指檔案不變；來源是連結時，移動的也是連結本身 | POSIX `rename`：old 是符號連結時改名的是連結本身；new 是符號連結時移除的是連結本身。Windows 的回復以 `FILE_FLAG_OPEN_REPARSE_POINT` 開啟備份，再以 `FileRenameInformation` 改名 | Windows 接管時用 `MoveFileExW` 取代目標位置上的連結，文件沒有寫明不跟隨連結，依 pilot 的結果 | 有條件。三平台接管後目標都是一般檔案，所指檔案的內容、大小與修改時間不變；回復後連結的身分與內容都和接管前相同 |
+| ASM-13 | Linux 與 macOS 的一般使用者可以建立符號連結；Windows 的標準使用者須開啟開發人員模式，並在建立時指定 `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE`，否則須具備 `SeCreateSymbolicLinkPrivilege`。設計不依賴建立符號連結 | `CreateSymbolicLinkW` 文件：未提權的程序要建立符號連結，須先開啟開發人員模式並指定此旗標。「Create symbolic links」使用者權限（`SeCreateSymbolicLinkPrivilege`）預設只給 Administrators 群組 | rosamta 只在讀取與搬移時處理連結，不建立連結（ASM-11、ASM-12）。Windows 不論開發人員模式是否開啟，接管與回復的方式都相同 | 通過。Windows 開發人員模式關閉時建立被拒（`ERROR_PRIVILEGE_NOT_HELD`，1314），開啟時成功。兩種情況下 P3 的接管與回復都成功；關閉時，測試用的連結由管理員預先建立，再由標準使用者移入 |
+
+ASM-11、ASM-12 的其他 pilot 案例：備份前若目標已換成一般檔案，備份會被拒絕，備份目錄不留檔案。回復前若本批寫入的檔案已被外部程式取代，回復會被拒絕，外部檔案與備份都保留（04 §3.3）。
+
+### 7.5 發佈
+
+| 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
+| --- | --- | --- | --- | --- |
+| ASM-14 | §2.1 的發佈目標只依賴作業系統內建的函式庫：Linux 為 static-pie，不依賴任何共享函式庫；Windows 只依賴系統 DLL；macOS 只依賴 `libSystem` | Apple QA1118：Apple 不支援靜態連結的執行檔，只保證動態連結的系統函式庫維持相容，所以 macOS 執行檔連結 `libSystem`，這是每台 macOS 都有的系統函式庫 | Windows 依賴 `kernel32`、`advapi32`、`ntdll` 與 API set `api-ms-win-core-synch-l1-2-0`。DC-004 驗收要求的「在只安裝作業系統與 git 的乾淨環境執行」還沒做，交給 06 | 有條件。四個發佈目標都建置成功，並以 `ldd`、`otool -L`、`dumpbin /dependents` 檢查依賴；toml_edit、MiniJinja 是純 Rust，不增加動態依賴 |
+
+### 7.6 文件出處
+
+- POSIX.1-2024：[`rename`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/rename.html)、[`link`／`linkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/link.html)、[`open`／`openat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/open.html)、[`unlink`／`unlinkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/unlink.html)、[`<sys/stat.h>`](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_stat.h.html)
+- macOS：[`fsync(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html)、[QA1118 Statically linked binaries on Mac OS X](https://developer.apple.com/library/archive/qa/qa1118/_index.html)
+- Windows：[`MoveFileExW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[`CreateFileW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[`GetFinalPathNameByHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)、[`FILE_ID_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[`FILE_DISPOSITION_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info)、[`FILE_LINK_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_link_information)、[`FILE_RENAME_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)、[`CreateSymbolicLinkW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw)、[Create symbolic links 使用者權限](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/create-symbolic-links)
