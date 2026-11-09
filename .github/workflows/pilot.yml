@@ -1,0 +1,174 @@
+# Feasibility pilot for the detailed design (docs/05-detailed-design).
+#
+# test: runs the pilot tests on each platform as a regular user. Linux and
+#   macOS runners already run steps as a non-root user; on Windows the tests
+#   run as a newly created standard user (see ci/run-as-standard-user.ps1).
+# dist: builds the release targets chosen in 05 §2.1 and checks that each
+#   binary depends only on libraries every installation of the OS has (DC-004).
+#
+# Runner images are pinned so that results can be reproduced.
+
+name: pilot
+
+on:
+  push:
+    paths:
+      - prototypes/pilot/**
+      - .github/workflows/pilot.yml
+  pull_request:
+    paths:
+      - prototypes/pilot/**
+      - .github/workflows/pilot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+defaults:
+  run:
+    working-directory: prototypes/pilot
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        shell: bash
+        run: rustup toolchain install && rustc -V
+
+      - name: Record the platform
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          tmp="$(dirname "$(mktemp -u)")"
+          {
+            echo "### Platform: ${{ matrix.os }}"
+            echo '```'
+            uname -a
+            id
+            echo "temp=$tmp"
+            df -P "$tmp"
+            if [ "$(uname)" = Linux ]; then
+              stat -f -c 'fs=%T' "$tmp"
+            else
+              sw_vers
+              mount | grep -E ' on (/|/System/Volumes/Data) '
+            fi
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Record the platform
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+          $dev = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -ErrorAction SilentlyContinue
+          $lines = @(
+            "### Platform: ${{ matrix.os }}",
+            '```',
+            "$($os.Caption) $($os.Version) build $($os.BuildNumber)",
+            ("developer mode: AllowDevelopmentWithoutDevLicense=" + $dev.AllowDevelopmentWithoutDevLicense),
+            (Get-Volume | Where-Object DriveLetter | Format-Table DriveLetter, FileSystem -AutoSize | Out-String).Trim(),
+            '```'
+          )
+          $lines | Tee-Object -Variable summary
+          $summary | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - name: Test (non-root user)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          test "$(id -u)" -ne 0
+          cargo test --locked -- --nocapture --test-threads=1 2>&1 | tee test.log
+
+      - name: Test (standard user)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./ci/run-as-standard-user.ps1 -Log test.log
+
+      - name: Summarize pilot results
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Pilot results: ${{ matrix.os }}"
+            echo '```'
+            grep -o 'PILOT-RESULT.*' test.log || echo 'no results'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  dist:
+    name: dist (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            rustflags: -C target-feature=+crt-static
+          - os: macos-15
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        shell: bash
+        run: rustup toolchain install && rustup target add ${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Check dynamic dependencies (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          bin=target/${{ matrix.target }}/release/pilot
+          file "$bin"
+          out="$(ldd "$bin" 2>&1 || true)"
+          echo "$out"
+          grep -Eq 'not a dynamic executable|statically linked' <<<"$out"
+
+      - name: Check dynamic dependencies (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bin=target/${{ matrix.target }}/release/pilot
+          file "$bin"
+          otool -L "$bin"
+          # Every dependency must ship with the OS.
+          extra="$(otool -L "$bin" | tail -n +2 | grep -Ev '^[[:space:]]+(/usr/lib/|/System/Library/)' || true)"
+          if [ -n "$extra" ]; then echo "not part of the OS: $extra"; exit 1; fi
+
+      - name: Check dynamic dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -find 'VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          $out = & $dumpbin /nologo /dependents "target\${{ matrix.target }}\release\pilot.exe"
+          $out
+          # With +crt-static the binary must not need the Visual C++ runtime.
+          if ($out -match '(?i)vcruntime|msvcp|api-ms-win-crt|ucrtbase') { throw 'depends on the C runtime' }
+
+      - name: Run
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: target/${{ matrix.target }}/release/pilot env
