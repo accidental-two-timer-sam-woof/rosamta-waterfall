@@ -655,6 +655,218 @@ removed = true
 
 在第 1、2 步之後中止，紀錄都帶有 `forget_pending`，套用時該目標一律保留（§5.11），不會因為 manifest 已移除而被清除，也不會因為紀錄將被刪除而被接管。回報的原因提示使用者再執行一次停止管理；指令對已完成的步驟不重做，可以直接再執行。輸出從未套用過、沒有紀錄時，只做第 2 步。停止管理與套用之間的互斥見 §6。
 
+## 6. 關鍵演算法與平台處理
+
+本節定義路徑的表示與比較、檔案操作如何與重檢綁定、寫入與回復，以及多程序互斥，回答 03 §12 第 4、5 項與 §5 留給本節的決定。演算法只依賴 §7 的平台假設，其中本節新增的列在 §7.7。各演算法由哪個類別負責見 §4；同步點與故障注入見 §8。
+
+### 6.1 home 與路徑
+
+**home**：執行檔啟動時以 Rust 的 `std::env::home_dir` 取得 home，放進 `HostContext`，整次執行使用同一個值。Linux 與 macOS 取環境變數 `HOME`，未設定或為空時查詢使用者資料庫（`getpwuid_r`）；Windows 取 `USERPROFILE`，未設定或為空時呼叫 `GetUserProfileDirectoryW`。測試因此可以用環境變數指定 home（§8.1）。
+
+home 必須是存在的目錄，而且是絕對路徑；否則除了顯示說明以外的子指令都回報 home 的值與原因，回傳 `1`。home 本身與它上層的路徑可以含連結，例如 `/home` 連到 `/var/home` 的系統，這是系統的配置，不在 rosamta 檢查的範圍內（ASM-05）。啟動時開啟 home 並持有它的 handle，記下檔案身分與實際路徑（Linux 與 macOS 用 `realpath`，Windows 用 `GetFinalPathNameByHandleW`）。之後所有的走訪都從這個 handle 開始。Windows 上這個 handle 不含 `FILE_SHARE_DELETE`，執行期間 home 不能被改名（ASM-08）。
+
+**展開與正規化**：manifest 的 `target`、本機設定的 `source` 與 `XDG_*` 變數，依下列步驟轉成 home 內的相對路徑：
+
+1. 展開 `~`、`${NAME}` 與 `$$`（§5.4），`~` 換成 home 的原值。
+2. 展開後必須是絕對路徑。Linux 與 macOS 以 `/` 開頭；Windows 以磁碟代號加分隔符號開頭，例如 `C:\`，不接受 UNC 路徑（`\\server\share`）與裝置路徑（`\\?\`、`\\.\`）。
+3. 以 `/` 分割，Windows 也以 `\` 分割。去掉空的元件與 `.`；遇到 `..` 時移除前一個元件。這是純文字的處理：rosamta 只依正規化後的路徑操作，不把原本的寫法交給作業系統解析，所以 `~/a/../b.conf` 一律指 `~/b.conf`，即使 `a` 是連結也一樣（FR-PLN-010）。
+4. 去掉 home 的前綴。與 home 的原值或實際路徑相符都可以，例如 home 為 `/home/u`、實際路徑為 `/var/home/u` 時，兩種寫法都在 home 內。Linux 與 macOS 逐位元組比較；Windows 不分大小寫，因為磁碟代號與使用者目錄都由系統建立在不分大小寫的目錄中。不在 home 內時預檢失敗，回報原本的寫法與展開後的路徑（FR-MAN-010）。
+5. 每個元件須符合名稱限制：不得為空；Windows 上不得含 `<>:"|?*` 與控制字元，不得以 `.` 或空格結尾，不得是保留的裝置名稱（`CON`、`PRN`、`AUX`、`NUL`、`COM1`–`COM9`、`LPT1`–`LPT9`，加上副檔名也一樣）。Win32 路徑會默默去掉結尾的 `.` 與空格，並把裝置名稱解讀成裝置，兩個不同的寫法因此可能指向同一個位置，或指向檔案系統以外，所以直接拒絕。拒絕 `:` 也排除了 NTFS 的替代資料流。
+
+結果是 home 內的相對路徑，§5.10 的 `target` 就是它以 `/` 連接的寫法。目標、來源目錄、設定目錄與狀態目錄都不得等於 home 本身。Windows 的實作以 `\\?\` 加絕對路徑呼叫 API，不受 `MAX_PATH` 的長度限制；`\\?\` 不處理 `.` 與 `..`，所以正規化必須在此之前完成。
+
+**走訪**：所有檔案操作都從 home 的 handle 逐層開啟目錄，不跟隨連結。Linux 與 macOS 用 `openat(O_NOFOLLOW | O_DIRECTORY)`（ASM-05）；Windows 以 `FILE_FLAG_OPEN_REPARSE_POINT` 開啟，拒絕 reparse point 並核對最終路徑（ASM-09），handle 帶 `FILE_LIST_DIRECTORY`、不含 `FILE_SHARE_DELETE`（ASM-08）。來源目錄中的範本與原樣複製來源，以同樣的方式從來源目錄的 handle 走訪（§3.1）。
+
+規則只有一條：**路徑中的目錄都不得是連結**。目標本身可以是連結，依 04 §3.1 的表格處理。
+
+| 情況 | 處理 |
+| --- | --- |
+| 啟用的輸出，目標的某一層上層目錄是連結 | 預檢失敗，指出是哪一層、連結指向哪裡，提示把 `target` 改成實際的路徑，回傳 `1`（04 §3.1「必須操作的目標類型不受支援」） |
+| 待清除的舊目標，某一層上層目錄是連結 | 位置無法確認，保留檔案與紀錄（§5.11、A5） |
+| 來源目錄、設定目錄或狀態目錄的路徑中有連結 | 除了顯示說明以外的子指令都失敗，回傳 `1` |
+| 範本或原樣複製的來源檔是連結，或它的路徑中有連結 | 預檢失敗，回報路徑與類型（04 §3.1、A9） |
+
+不跟隨目錄的連結，是因為預檢無法分辨使用者自己建立的連結和 A10 那種在兩次檢查之間換入的連結，兩者在檔案系統上完全相同。若要跟隨，每次重檢都要重新解析連結，並確認結果仍在 home 或來源目錄內，pilot 驗證的逐層 `O_NOFOLLOW` 也不再適用。代價是 `~/.config` 本身是連結的使用者，必須把 `target` 寫成連結指向的實際位置，預檢的訊息會指出這一點。來源檔不接受連結，理由相同；多個輸出可以直接在 manifest 引用同一個來源檔，不需要以連結共用。git 在不支援連結的環境（例如 Windows 未開啟 `core.symlinks`）會把連結存成一般檔案，這時讀到的是一般檔案。
+
+尚不存在的上層目錄在執行時建立（§6.3）。
+
+### 6.2 位置的比較
+
+FR-PLN-009 與 FR-PLN-010 的目標碰撞、§5.2 的保留位置、§5.10 的紀錄比對，以及初始化時三個目錄互不包含，都使用同一種比較。路徑先依 §6.1 正規化，再從 home 走訪，轉成**位置鍵**：
+
+- 已存在的元件，以檔案身分表示（ASM-04）。目標本身存在時也一樣。
+- 從第一個不存在的元件起，以名稱表示。最深一個存在的目錄不分大小寫時，名稱逐字元轉成小寫（Unicode 的小寫對應）後再比較；新建的目錄沿用上層的設定，所以其後的元件都依同一規則。目錄是否區分大小寫由 `FileSystem` 回答（§3.1、§6.8）。
+
+兩個位置鍵相同，表示同一個位置；一個是另一個的前段，表示一個路徑被當成另一個路徑的上層目錄，也就是同一路徑同時被當成檔案與目錄（04 §3.1）。
+
+已存在的部分以身分比較，不必猜測檔案系統的命名規則：只差大小寫的名稱、Windows 的 8.3 短檔名，以及在 home 內兩處掛載同一個目錄（bind mount），都會得到相同的身分。指向同一個檔案的兩個 hard link 也算碰撞。
+
+尚不存在的部分只能比較名稱，可能與檔案系統的實際規則不同，例如 macOS 把 Unicode 標準等價的名稱視為同一個檔案，而上述規則只處理大小寫。這類漏判不會造成覆寫：建立檔案一律不覆蓋既有項目（§6.3），後建立的一項會因目標已存在而失敗，依執行失敗整批回復（§6.6）。
+
+FR-PLN-010 的兩個驗收例：`~/a/../b.conf` 在正規化時就變成 `~/b.conf`。Windows 上的 `~/.Config/app.conf` 與 `~/.config/app.conf`，若 `.config` 已存在，兩者走訪到同一個目錄身分；若不存在，home 不分大小寫，比較轉成小寫的名稱。兩種情況都判為碰撞，回報列出每個輸出的名稱、宣告位置與目標路徑（FR-PLN-009）。
+
+位置鍵只在一次執行內有效（ASM-04）。狀態檔以相對路徑與父目錄身分記錄位置（§5.10）；載入後把紀錄的路徑轉成位置鍵，再與本次的目標比對。因此在 Windows 上把 `target` 的 `.Config` 改成 `.config`，新舊路徑是同一個位置，紀錄沿用並改寫成新的寫法，不會清除後重建。
+
+### 6.3 觀測與操作綁定
+
+預檢通過，不代表執行時目標仍然相同（03 §12 第 4 項）。本節的做法：規劃時記錄觀測；每次操作前依觀測核對，並把核對和操作綁在同一組 handle 上；平台無法綁定的空窗，以操作後的核對找出並復原。
+
+**觀測**：規劃時，`Planner` 為每個目標記錄下列資料。狀態檔、本機設定與 manifest 的讀取也記錄同樣的觀測。
+
+- 位置：從 home 到父目錄，每一層的檔案身分。
+- 存在狀態與類型：一般檔案、目錄、連結或其他類型，不跟隨連結判斷。Windows 只有 `IO_REPARSE_TAG_SYMLINK` 算連結，其他 reparse point（junction、OneDrive 的雲端檔案等）屬於其他類型（ASM-09）。
+- 身分：目標存在時的檔案身分。
+- 版本：一般檔案內容的 SHA-256，以及 Linux 與 macOS 的權限位元。開檔時使用 `O_NOFOLLOW | O_NONBLOCK`（ASM-21），開啟後以 handle 核對身分與類型，再讀取內容。不是一般檔案的目標只看類型，不開檔讀取（04 §3.1、A18）。
+
+**綁定**：每一個會改變檔案、或讀取快照與備份的操作，都依下列步驟執行：
+
+1. 從 home 走訪到父目錄，核對每一層的身分與觀測相同。本批建立的目錄，以建立時記下的身分核對。
+2. 核對目標的存在狀態、類型與身分。操作依賴內容時（取代、刪除、擷取快照、製作備份），經由開啟的 handle 計算 SHA-256，與觀測的版本比較。
+3. 透過步驟 1 持有的父目錄 handle 執行操作（下表）。
+4. 再從 home 走訪一次，確認路徑仍通往持有的父目錄，且目標是操作預期的結果：本批寫入的檔案，或已不存在。
+5. 步驟 1、2 不符時，不執行操作。步驟 4 發現路徑已不通往持有的目錄時，經由同一組 handle 復原這次操作（ASM-06）；發現目標不是預期的結果時，不再動它。三種情況都是觀測失效，依執行失敗處理（§6.6）。
+
+Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保險；Linux 與 macOS 擋不住（ASM-06），步驟 4 是唯一的防線。
+
+各操作的實作如下，P 是持有的父目錄 handle，N 是目標的名稱，暫存檔見 §6.4：
+
+| 操作 | Linux、macOS | Windows |
+| --- | --- | --- |
+| 建立 | 暫存檔寫好後 `linkat(P, 暫存檔, P, N)`，再以 `unlinkat` 移除暫存檔的名稱。N 已存在時 `linkat` 以 `EEXIST` 失敗，不覆蓋（ASM-16） | `MoveFileExW(暫存檔, N, MOVEFILE_WRITE_THROUGH)`，不指定 `MOVEFILE_REPLACE_EXISTING`，N 已存在時失敗（ASM-16） |
+| 取代 | 交換式改名：以 `renameat2(RENAME_EXCHANGE)`（Linux）或 `renameatx_np(RENAME_SWAP)`（macOS）交換暫存檔與 N（ASM-17）。交換後，暫存檔的名稱指向被取代的檔案；核對它的身分與版本仍是觀測所見，不符時再交換一次換回來 | 以 `FILE_READ_DATA` 開啟目標，共用模式只有 `FILE_SHARE_READ`，核對身分與版本；持有期間其他程序無法改名、刪除或寫入目標（ASM-18）。核對後關閉，立即 `MoveFileExW(MOVEFILE_REPLACE_EXISTING \| MOVEFILE_WRITE_THROUGH)`（ASM-02） |
+| 刪除 | 以 `renameat` 把 N 改成暫存檔名稱，核對它的身分與版本，相符才 `unlinkat`；不符時以「建立」的方式移回 N | 以 `DELETE \| FILE_READ_DATA` 開啟，共用模式只有 `FILE_SHARE_READ`，核對身分與版本後設定 `FileDispositionInfo`（ASM-10、ASM-18） |
+| 變更權限 | `openat(O_NOFOLLOW \| O_NONBLOCK)` 開啟，核對身分與版本後 `fchmod` | 不適用（§5.4） |
+| 建立目錄 | `mkdirat(P, N)`，再以 `O_NOFOLLOW` 開啟並記下身分 | `CreateDirectoryW`，再依 §6.1 開啟並記下身分 |
+
+取代與刪除都先把舊檔移到另一個名稱、確認無誤後才放手：被換入的檔案、特殊檔案，或在最後一次核對後對原檔的就地修改，都會在交換或移開後被發現，並移回原位保留（A18、A19）。建立不覆蓋，所以最後一次確認位置為空之後才出現的檔案也會保留（A15）。
+
+**剩下的空窗**：Windows 的取代，在關閉 handle 到 `MoveFileExW` 之間仍有空窗；Linux 與 macOS 的檔案系統不支援交換時（`EINVAL` 或 `ENOTSUP`），改用 `renameat` 直接取代，在最後一次核對與 `renameat` 之間也有空窗（ASM-07）。空窗內被換入的檔案或對原檔的修改會被取代掉，事後也無法發現。這段空窗只有一次系統呼叫的長度，位於同一個 `FileSystem` 呼叫內部，§8 的同步點都在它之外。
+
+**管理與初始化的寫入**（04 §3.3 末段、A7、A12）沿用同一套操作：
+
+- manifest 與本機設定的修改用「取代」，被取代的必須是讀取時的版本。使用者在指令執行期間以編輯器修改了檔案時，指令回報失敗，保留使用者的版本。原本不存在的本機設定用「建立」。
+- 納入管理的來源副本用「建立」。預定位置在最後一次確認後才被占用時，依 §5.4 改用下一個名稱。寫入順序是先建立副本、再修改 manifest；manifest 修改失敗時刪除本次建立的副本。
+- 初始化取得遠端來源時，先 clone 到正式位置所在目錄中的 `.<名稱>.rosamta-tmp.<程序編號>.<序號>/`，確保與正式位置在同一個檔案系統，再以不覆蓋的方式把整個目錄改名到正式位置：Linux 用 `renameat2(RENAME_NOREPLACE)`，macOS 用 `renameatx_np(RENAME_EXCL)`，Windows 用不指定取代的 `MoveFileExW`（ASM-16）。git 以路徑寫入暫存目錄，rosamta 無法綁定它的操作，只能在 clone 前後核對暫存目錄與它的上層仍是建立時的身分。
+
+### 6.4 檔案的寫入與權限
+
+**暫存檔**：寫入一律先寫暫存檔，放在目標所在的目錄，命名依 §5.1。Linux 與 macOS 以 `openat(P, O_CREAT | O_EXCL | O_NOFOLLOW, 0600)` 建立（ASM-03），Windows 以 `CREATE_NEW` 建立。寫入完整內容後 `fsync`（Windows 為 `FlushFileBuffers`），設定最終的權限，記下它的身分，再依 §6.3 建立或取代。與 pilot P2 相同（ASM-01、ASM-02）。
+
+**權限**（Linux、macOS）：暫存檔以 `0600` 建立，內容寫完後、建立或取代之前，以 `fchmod` 設成最終的權限：
+
+| 情況 | 最終的權限 |
+| --- | --- |
+| 輸出宣告了 `permissions` | 宣告的值（FR-MAN-015） |
+| 未宣告，目標已存在 | 原檔的權限位元（FR-MAN-016） |
+| 未宣告，目標不存在 | `0666` 去掉 umask，與一般程式建立的檔案相同 |
+
+內容在 `0600` 下寫入，寫完才放寬，不完整的內容不會被其他帳號讀到；最終的權限與輸出寫好後本來就會有的權限相同。新建的輸出不預設 `0600`，因為設定檔通常不需要保密，預設值與使用者以編輯器建立的檔案一致；需要保密的輸出以 `permissions` 宣告，例如 §5.4 的 `ssh-config`。umask 只能透過設定它來讀取，由執行檔在啟動時、還沒有其他執行緒時讀取一次並立即還原，交給 platform 的 `FileSystem` 實作。
+
+**Windows 的存取控制**：
+
+- 暫存檔沿用目錄繼承的 ACL（ASM-02）。取代既有檔案時，若原檔的 DACL 含有明確設定的項目，或設為不繼承上層，在寫入內容之前以 `GetSecurityInfo`、`SetSecurityInfo` 把原檔的 DACL 複製到暫存檔（ASM-19），取代後保有原本的存取設定（FR-MAN-016）。原檔的 DACL 全是繼承來的項目時不必複製，暫存檔繼承到的是同一組。
+- rosamta 建立的狀態目錄、設定目錄，以及 `backups/`、`txn/` 底下的批次目錄，建立時就指定不繼承上層的 DACL：目前的使用者、`SYSTEM` 與 `Administrators` 完全控制，並由子項目繼承（ASM-19）。這與 Windows 為使用者 home 預設的設定相同，其他一般帳號無法存取（04 §3.3）。Linux 與 macOS 上這些目錄是 `0700`（§5.1）。目錄已存在時，不修改它的權限或 ACL。
+- Windows 沒有權限位元，`permissions` 不套用，狀態檔的 `mode` 為 `null`（§5.4、§5.10）。SEC-003 只適用於 Linux 與 macOS。
+
+### 6.5 回復快照、接管備份與殘留檔案
+
+**回復快照**：批次中第一次要改動檔案時，`RecoveryManager` 建立 `txn/<批次編號>/`（§5.1）。每個要被取代或刪除的既有一般檔案，在操作前擷取快照：
+
+1. 依 §6.3 步驟 1、2 開啟目標，經由同一個 handle 讀取，邊讀邊計算 SHA-256，寫入 `txn/<批次編號>/` 中的副本（Linux 與 macOS 為 `0600`），另記下原檔的權限位元，Windows 則記下 DACL。
+2. 讀完後，以計算出的 SHA-256 與觀測的版本比較；不符時捨棄副本，視為觀測失效（A16）。比較的是實際讀到的位元組，讀取期間的修改會使結果不符，即使讀完後又改回也一樣。
+3. 依 §6.3 步驟 4 確認路徑仍通往原本的目錄，確保讀到的不是替代位置的檔案（A16）。
+
+只變更權限的項目不複製內容，只記下原權限。副本以序號命名，與目標的對應關係保存在記憶體中：批次只在同一個程序內回復，03 S5 沒有程序中止後自動復原的需求。
+
+快照用複製，不用 hard link。hard link 與原檔是同一個檔案，擷取後原檔被就地修改時，快照也跟著改變，保存不了規劃時的版本。複製的代價是空間（§6.6）。
+
+**接管備份**的建立方式（§5.12）：
+
+- 一般檔案：先嘗試在備份目錄為原檔建立 hard link。Linux 與 macOS 用 `linkat`，建立後核對備份的身分與原檔相同；Windows 以原檔的 handle 用 `FileLinkInformation` 建立（ASM-11）。hard link 就是原檔本身，權限自然相同（SEC-003），也不占額外空間。備份目錄與目標不在同一個檔案系統，或無法建立 hard link 時（例如 `EXDEV`、`ERROR_NOT_SAME_DEVICE`，或 Linux 的 `fs.protected_hardlinks` 拒絕），改以快照的方式複製，Linux 與 macOS 再把副本的權限設成原檔的權限（SEC-003）。兩種方式都在建立後核對備份的版本。
+- 連結：只能以 hard link 備份（§7.4），所以備份目錄必須與目標在同一個檔案系統。規劃時比較兩者的檔案系統（Linux 與 macOS 的 `st_dev`、Windows 的 volume 序號，在同一次執行內有效，ASM-04），不同時預檢失敗，回報目標與狀態目錄，回傳 `1`（04 §3.1「無法安全備份」）。不改用 `readlinkat` 加 `symlinkat` 複製連結：那樣回復時就要在目標路徑建立新的連結，正是 §7.4 為了 Windows 標準使用者與 DC-003 而避開的做法。連結的回復以這份備份為來源，不另外擷取快照。
+
+**殘留檔案的清理**（§5.1 的暫存檔與 `txn/`）：
+
+- 批次中每個暫存檔的名稱，包括 §6.3 交換或移開後指向舊檔的名稱，在建立前先把它在 home 內的相對路徑附加到 `txn/<批次編號>/journal`（每行一筆）。
+- 批次成功或回復結束後，依 journal 刪除仍存在的暫存檔，再刪除整個 `txn/<批次編號>/`。刪除經過 §6.3 的走訪，只刪除名稱含 `.rosamta-tmp.` 的項目，不跟隨連結。§6.3 中移不回原位而保留下來的外部檔案不刪除，回報它的位置。
+- 程序中止後，下一個取得鎖定（§6.7）的指令在規劃之前，依 journal 清理每一個殘留的批次目錄，並在標準錯誤說明該批次沒有正常結束。中止的批次可能已改動部分輸出，但每個輸出都是完整的舊版或新版（REL-001），狀態檔也是（REL-002）。已寫入、狀態卻未提交的輸出，下次規劃時內容符合期望，依 §5.11 只更新紀錄或直接納管；已刪除而未提交的，依「舊檔不存在」只移除紀錄。所以不需要另外的復原步驟。
+- 預覽與查詢不取得鎖定，也不寫入，所以不清理；發現殘留的批次目錄時，只在標準錯誤提示。
+- 清理失敗只在標準錯誤警告，不改變已提交的結果與 exit code（04 §3.3）。
+
+### 6.6 批次的執行與回復
+
+本節細化 03 S5。預檢通過後，`Executor` 依下列步驟執行：
+
+1. **開始**：狀態檔存在時，依 §6.5 擷取它的快照，核對與首次載入的版本相同（A25）；不存在時記下「不存在」。失敗時不改動任何目標。
+2. **逐項處理**：依計畫的順序處理每個項目，順序與預覽列出的相同。保留的項目不動。要改動目標的項目，先擷取快照、需要時製作接管備份，再依 §6.3 執行。只更新紀錄的項目不動目標。任何一步失敗或觀測失效，停止處理後續項目，進入回復。
+3. **提交前重檢**：依 04 §3.3，核對所有預定回報完成的項目，包括「不變」與只更新紀錄的項目。建立或更新的目標仍是本批寫入的檔案，內容與適用的權限都相同；刪除的目標仍不存在；其餘項目的身分、版本與宣告的權限仍與觀測相同。狀態檔仍是首次載入的版本。任何一項不符就是觀測失效。
+4. **提交狀態**：狀態有變更時，把新狀態寫成暫存檔，依 §6.3 取代狀態檔，被取代的必須是首次載入的版本（A23）；原本沒有狀態檔時用「建立」。
+5. **完成確認**：再做一次步驟 3 的核對；狀態檔改為核對它是本批寫入的檔案（有提交時），或仍是首次載入的版本（無須提交時）。通過才判定批次完成（A17、A26）。
+6. **結束**：依 §6.5 清理快照、journal 與暫存檔，回報各項結果與接管備份的位置。
+
+步驟 3 讓已經失效的批次不必提交狀態；步驟 5 涵蓋提交期間發生的改動。04 §3.3 要求重檢條件「維持到批次完成」，以步驟 5 為界，之後的改動不屬於本批。
+
+**回復**：步驟 2 到 5 失敗時，依操作的相反順序處理本批改動過的每個目標，最後處理狀態檔。每一項都依 §6.3 綁定，先核對目標仍是本批操作後的結果：
+
+| 本批的操作 | 回復前的核對 | 回復方式 |
+| --- | --- | --- |
+| 建立 | 目標仍是本批寫入的檔案，內容與權限相同 | 依 §6.3 刪除 |
+| 更新、接管一般檔案 | 同上 | 以快照的內容與原權限（Windows 為原 DACL）寫成暫存檔，依 §6.3 取代。接管的備份在取代成功後刪除（§5.12） |
+| 接管連結 | 同上 | 把備份改名回目標路徑，取代本批寫入的檔案（§7.4） |
+| 刪除 | 父目錄仍在原位，目標仍不存在 | 以快照的內容與原權限依 §6.3 建立；位置已被占用時不覆蓋（A22） |
+| 變更權限 | 目標的身分與內容未變，權限仍是本批設定的值 | 以 `fchmod` 改回原權限 |
+| 建立目錄 | 仍是本批建立的目錄，而且是空的 | 刪除；不符時保留，不算回復失敗 |
+| 狀態檔 | 目前是本批寫入的版本 | 核對快照仍是首次載入的版本後（A25），依 §6.3 取代；原本沒有狀態檔時刪除 |
+
+使用快照之前，先核對副本的 SHA-256 仍與擷取時相同；不同時不使用它（A16）。核對不符或無法確認的項目保留現況，記下路徑與原因，繼續處理下一項（04 §3.3）。回報說明是否全部已回復，否則逐項列出未能回復的路徑與原因（FR-APL-003、FR-APL-004）。
+
+**空間**（04 §3.3）：執行期間需要的空間有四部分：
+
+- 所有啟用輸出的期望內容，在規劃時讀入記憶體，執行時不重讀來源（04 §2、A24）。
+- 同一時間最多一個暫存檔，位於目標所在的檔案系統，大小等於該輸出。
+- 回復快照，位於狀態目錄的檔案系統，總和等於本批要取代或刪除的既有檔案大小。
+- 跨檔案系統的接管備份，大小等於被接管的檔案；同一個檔案系統時是 hard link，不占空間。
+
+空間不足時，寫入暫存檔或快照會失敗，依執行失敗整批回復。回復只寫入暫存檔，需要的空間不超過被回復的單一檔案；它在本批取代時已經寫入過同樣大小的暫存檔。
+
+### 6.7 多程序互斥
+
+SRS AS-5 假設同一組目標同時只有一個 rosamta 程序在套用；03 §12 第 4 項要求說明多個 rosamta 同時執行時怎麼處理。
+
+- 會寫入的子指令（套用，包括指定接受 drift；納入管理、修改屬性、停止管理；初始化）在讀取任何設定之前，取得 `<狀態目錄>/lock` 的獨占鎖定，持有到程序結束。取不到時立即回報「另一個 rosamta 程序正在執行」與鎖定檔的路徑，回傳 `1`，不等待。
+- 預覽、摘要、查詢與說明不取得鎖定：鎖定檔可能需要建立，違反預覽與查詢的唯讀要求（FR-PLN-004、FR-QRY-006）。另一個程序正在套用時，預覽看到的是當下的檔案。
+- Linux 與 macOS：經 §6.1 的走訪，以 `openat(O_RDWR | O_CREAT | O_NOFOLLOW, 0600)` 開啟鎖定檔，再呼叫 `flock(LOCK_EX | LOCK_NB)`。不用 `fcntl` 的記錄鎖：同一個程序關閉該檔案的任何一個 fd，`fcntl` 鎖就會釋放。Windows：以共用模式 `0` 和 `OPEN_ALWAYS` 開啟，已被其他程序開啟時以 `ERROR_SHARING_VIOLATION` 失敗（ASM-20）。
+- 程序結束或被終止時，作業系統釋放鎖定，不會留下需要手動刪除的鎖。鎖定檔建立後不刪除：刪除後再建立，兩個程序可能各自鎖住不同的檔案。
+- 初始化時狀態目錄可能還不存在，先依 §5.1 建立狀態目錄，再取得鎖定。
+
+**停止管理與套用**（§5.13、FR-MAN-025、04 §2）：兩者取得同一個鎖定，不會交錯執行。套用在取得鎖定之後才規劃，不沿用先前預覽的計畫，所以停止管理完成後的套用，一定依新的 manifest 與狀態檔規劃；04 §2 提到的計畫版本檢查不需要另外實作。A5 最後一個情境中，若在套用持有鎖定時執行停止管理，停止管理會因取不到鎖定而失敗，套用依原計畫完成，屬於 04 §5「平台阻止外部操作」的情形。
+
+鎖定只協調 rosamta 程序之間的執行。其他程式的改動，由 §6.3 的核對處理。兩個 rosamta 程序使用不同的狀態目錄時（例如 `XDG_STATE_HOME` 不同），鎖定無效，這已超出 AS-5 的範圍，但 §6.3 的核對仍然有效。
+
+### 6.8 三平台差異
+
+| 項目 | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| home | `HOME`，未設定時查 `getpwuid_r` | 同 Linux | `USERPROFILE`，未設定時 `GetUserProfileDirectoryW` |
+| 檔案身分 | `st_dev` 加 `st_ino`；狀態檔只記 `st_ino`（ASM-15） | 同 Linux | volume 序號加 128 位元 file ID |
+| 走訪目錄 | `openat(O_NOFOLLOW \| O_DIRECTORY)` | 同 Linux | `FILE_FLAG_OPEN_REPARSE_POINT`，拒絕 reparse point，核對最終路徑 |
+| 操作期間目錄被改名 | 擋不住；操作後重檢並復原（ASM-06） | 同 Linux | handle 不含 `FILE_SHARE_DELETE`，擋下（ASM-08） |
+| 是否區分大小寫 | 預設區分；目錄有 casefold 屬性（`FS_CASEFOLD_FL`）時不分 | 依 `fpathconf(_PC_CASE_SENSITIVE)`；APFS 預設不分 | 預設不分；目錄設定了區分大小寫（`FILE_CS_FLAG_CASE_SENSITIVE_DIR`）時區分 |
+| 建立 | `linkat`，不覆蓋 | 同 Linux | `MoveFileExW`，不指定取代 |
+| 取代 | `renameat2(RENAME_EXCHANGE)` 後核對；不支援時 `renameat` | `renameatx_np(RENAME_SWAP)` 後核對；不支援時 `renameat` | 持有 handle 核對後，`MoveFileExW` 取代 |
+| 刪除 | 移開、核對後 `unlinkat` | 同 Linux | handle 的 `FileDispositionInfo` |
+| 目錄的不覆蓋改名（初始化） | `renameat2(RENAME_NOREPLACE)` | `renameatx_np(RENAME_EXCL)` | `MoveFileExW`，不指定取代 |
+| 權限 | 權限位元；新檔為 `0666` 去掉 umask | 同 Linux | 不套用 `permissions`；有明確項目的 DACL 複製到新檔 |
+| 程式目錄的存取限制 | `0700` | 同 Linux | 不繼承的 DACL：本人、`SYSTEM`、`Administrators` |
+| 視為連結的目標 | 符號連結 | 同 Linux | 只有 `IO_REPARSE_TAG_SYMLINK`；其他 reparse point 屬於其他類型 |
+| 不開檔讀取的類型 | 目錄、FIFO、裝置檔、通訊端 | 同 Linux | 目錄、`IO_REPARSE_TAG_SYMLINK` 以外的 reparse point |
+| 建立符號連結 | 不需要（ASM-13） | 不需要 | 不需要 |
+| 鎖定 | `flock` | `flock` | 共用模式 `0` |
+| 名稱限制 | 不含 `/` 與 NUL | 同 Linux | §6.1 第 5 步 |
+| 路徑長度 | — | — | 內部使用 `\\?\` |
+
+是否區分大小寫的查詢只影響尚不存在的路徑的碰撞判定。查詢失敗時（例如舊版 Windows 不支援 `FileCaseSensitiveInfo`），採用該平台的預設值；判定有誤時，最壞的結果是碰撞在執行時才被不覆蓋的建立擋下（§6.2）。
+
 ## 7. 平台假設清單
 
 本節列出設計依賴、而 Rust 標準函式庫不保證的作業系統行為。每項假設以 `ASM-NN` 編號，列出官方文件依據、文件保證的範圍，以及 pilot 結果（`prototypes/pilot/`）。§6 的演算法只依賴本節列出的行為；06 為每個 `ASM-NN` 安排測試情境（§13）。
@@ -663,10 +875,10 @@ pilot 結果分四種：
 
 - 通過：官方文件有保證，pilot 在三平台的結果也相符。
 - 有條件：pilot 在三平台都相符，但相關行為官方文件沒有寫明，或須由設計另外確保某個前提。條件寫在「保證範圍與條件」欄。
-- 未驗證：pilot 無法重現這個行為，例如需要重新開機。設計須在假設不成立時仍不會誤寫或誤刪，並寫明由 06 如何驗證。
+- 未驗證：pilot 沒有重現這個行為：無法重現，例如需要重新開機；或是 §6 新增、pilot 還沒有涵蓋的行為。須寫明假設不成立時的後果，以及由 pilot 或 06 如何驗證。
 - 不可行：這個做法無法滿足需求，須改變設計或修訂 SRS（04 §3.3 末段）。
 
-本版沒有「不可行」的項目，「未驗證」只有 ASM-15。P4、P5 驗證的是選定套件的行為，不屬於平台假設，結果見 §2.2、§2.3；兩者在三平台都通過。
+本版沒有「不可行」的項目。「未驗證」的是 ASM-15，以及 §7.7 的 ASM-16–ASM-21。P4、P5 驗證的是選定套件的行為，不屬於平台假設，結果見 §2.2、§2.3；兩者在三平台都通過。
 
 ### 7.1 驗證環境
 
@@ -696,7 +908,7 @@ Windows 的開發人員模式以登錄值 `AllowDevelopmentWithoutDevLicense` �
 | ASM-04 | 檔案身分可由 handle 取得並比較：Linux 與 macOS 用 `st_dev` 加 `st_ino`，Windows 用 volume 序號加 128 位元的 file ID | POSIX `<sys/stat.h>`：`st_ino` 與 `st_dev` 合起來在系統內唯一識別一個檔案。`FILE_ID_INFO` 文件：file ID 在同一 volume 內識別檔案 | 檔案刪除後編號可能被重複使用，所以只在同一批次內、對仍存在或剛確認過的檔案比較。網路檔案系統不在驗證範圍 | 通過。P1、P3 都用身分比較偵測替換，所有成功的替換都被偵測到 |
 | ASM-05 | Linux 與 macOS 上，從 home 以 `openat(O_NOFOLLOW \| O_DIRECTORY)` 逐層開啟目錄，遇到符號連結就失敗；之後以目錄 fd 為基準的 `openat`、`renameat`、`unlinkat`、`linkat` 和 `fstatat(AT_SYMLINK_NOFOLLOW)`，都作用在該 fd 對應的目錄 | POSIX `open`：`O_NOFOLLOW` 遇到符號連結以 `ELOOP` 失敗；`O_DIRECTORY` 遇到非目錄以 `ENOTDIR` 失敗；相對路徑以 fd 對應的目錄為基準 | home 本身的路徑不在此範圍，由 §6 的正規化規則處理 | 通過。預檢後替換父目錄或上層目錄的 24 個案例，在 Linux、macOS 都被拒絕；P3 讀取連結時以 `ELOOP` 失敗，不會讀到所指檔案 |
 | ASM-06 | Linux 與 macOS 上，持有目錄 fd 不能阻止其他程序改名或搬移該目錄。設計因此在操作後重新走訪路徑；若路徑已不通往持有的目錄，就經同一個 fd 復原 | POSIX `rename`：目錄正被其他程序使用時，是否以 `EBUSY` 失敗由實作決定；Linux 與 macOS 不會因目錄已被開啟而拒絕改名 | DC-002 在 Unix 的保證範圍：寫入不會落在替代的目錄或連結指向的位置。但若外部程序把原目錄整個搬到 home 外，本批寫入會短暫出現在搬出去的目錄中，重檢後隨即復原 | 有條件。最後一次檢查後替換的 24 個案例，Linux、macOS 的建立、更新、刪除都已復原，快照都判定失效；其中搬出 home 的 6 個寫入案例，寫入曾短暫出現在 home 外。另一個程序持續替換父目錄時跑 300 輪，沒有違反任何檢查條件 |
-| ASM-07 | Linux 與 macOS 沒有以 handle 刪除或改名檔案的操作，核對檔案身分到 `unlinkat`、`renameat` 之間仍有空窗 | POSIX `unlinkat`、`renameat` 只接受名稱 | 這個空窗內的替換無法事先阻止，只能靠操作後的重檢發現（ASM-06）。§8 在這個空窗設同步點，由 06 驗證 | 有條件。pilot 的同步點不在這個空窗內；持續替換的 300 輪沒有違反檢查條件 |
+| ASM-07 | Linux 與 macOS 沒有以 handle 刪除或改名檔案的操作，核對檔案身分到 `unlinkat`、`renameat` 之間仍有空窗 | POSIX `unlinkat`、`renameat` 只接受名稱 | 這個空窗內的替換無法事先阻止。§6.3 的取代以交換式改名（ASM-17）、刪除以先移開再核對，把被換入的檔案移到另一個名稱後再核對，不會刪除它；只有檔案系統不支援交換時，取代仍有這個空窗。§8.2 的 `BeforeOperation` 同步點就在這個空窗，由 06 驗證 | 有條件。pilot 的同步點不在這個空窗內；持續替換的 300 輪沒有違反檢查條件 |
 | ASM-08 | Windows 上，以具資料存取權（`FILE_LIST_DIRECTORY`）、不含 `FILE_SHARE_DELETE` 的 handle 持有目錄時，其他程序無法改名或刪除該目錄。在這些目錄內的寫入可以用路徑操作 | `CreateFileW` 文件：沒有 `FILE_SHARE_DELETE` 時，其他程序以 delete 存取權開啟會失敗，而 delete 存取權同時涵蓋刪除與改名 | 文件沒有說明哪些存取權會參與共用檢查。pilot 發現只有 `FILE_READ_ATTRIBUTES` 和 `SYNCHRONIZE` 的 handle 擋不住改名，所以須加上 `FILE_LIST_DIRECTORY` | 有條件。兩個 Windows job 中，最後一次檢查後的 48 次替換都被擋下（sharing violation），操作照計畫完成。持續替換時，外部程序的嘗試被擋下 225–242 次 |
 | ASM-09 | Windows 上，以 `FILE_FLAG_OPEN_REPARSE_POINT` 開啟會取得 reparse point 本身，不跟隨；開啟目錄後以 `GetFinalPathNameByHandleW` 核對最終路徑 | `CreateFileW` 文件：指定此旗標時不做一般的 reparse point 處理，直接開啟 reparse point | 符號連結、junction 以及其他 reparse point 一律視為連結。路徑中的目錄是 reparse point 時拒絕操作；目標是 reparse point 時，只有 `IO_REPARSE_TAG_SYMLINK` 可以接管（§6） | 通過。預檢後換成 junction 的案例都被拒絕；P3 讀取連結時開到的是連結本身，判定類型不符，不會讀到所指檔案 |
 | ASM-10 | Windows 上，以 handle 設定 `FileDispositionInfo` 刪除檔案，刪除的就是核對過身分的那個檔案 | `FILE_DISPOSITION_INFO` 文件：handle 關閉時刪除該檔案 | 須以 `DELETE` 存取權開啟 | 通過。P1 的刪除案例照計畫完成 |
@@ -733,8 +945,23 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 | --- | --- | --- | --- | --- |
 | ASM-15 | 目錄存在期間，它的檔案編號跨程序、跨重新開機都不變：Linux 與 macOS 的 `st_ino`，Windows 的 volume 序號與 128 位元 file ID。狀態檔不記錄 Linux 與 macOS 的 `st_dev` | `BY_HANDLE_FILE_INFORMATION` 文件：NTFS 上的檔案在刪除前保持同一個 file ID。POSIX `<sys/stat.h>` 只規定 `st_dev` 加 `st_ino` 在系統內唯一，沒有規定重新掛載後不變 | `st_dev` 由核心在掛載時配給，例如 btrfs subvolume 使用匿名裝置編號，重新開機後可能不同，所以不記錄。不比較 `st_dev` 時，不同檔案系統上的目錄可能編號相同；目錄刪除後，編號也可能被新目錄重複使用（ASM-04）。這兩種誤判都會把父目錄當成沒有被替換，但 §5.11 仍要求內容符合紀錄的實際基準才會覆寫或刪除，所以被改動的內容與 rosamta 上次寫入的相同。反過來，編號若意外改變，紀錄判為位置無法確認：啟用的輸出改按未受管理處理，清除時保留檔案，不會誤寫或誤刪 | 未驗證。CI 無法重新開機。本機 btrfs 的 home 裝置編號為 0:47，major 為 0，是匿名裝置。06 在實機上於重新開機前後各套用一次，確認沒有紀錄被判為位置無法確認 |
 
-### 7.7 文件出處
+### 7.7 §6 新增的假設
+
+§6 的演算法另外依賴下列行為。它們都有官方文件依據，但 pilot 還沒有涵蓋，所以都是「未驗證」。假設不成立時的後果寫在「保證範圍與條件」欄；驗證方式見 §13。
+
+| 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
+| --- | --- | --- | --- | --- |
+| ASM-16 | 有不覆蓋既有項目的建立與改名：Linux 與 macOS 的 `linkat` 在新名稱已存在時以 `EEXIST` 失敗；目錄的改名用 `renameat2(RENAME_NOREPLACE)`（Linux）與 `renameatx_np(RENAME_EXCL)`（macOS）；Windows 的 `MoveFileExW` 不指定 `MOVEFILE_REPLACE_EXISTING` 時，目的地已存在就失敗 | POSIX `link`：path2 已存在時以 `EEXIST` 失敗，連結也算存在。Linux `rename(2)`：`RENAME_NOREPLACE` 在 newpath 已存在時失敗，須檔案系統支援。macOS `rename(2)`：`RENAME_EXCL` 須檔案系統支援（`VOL_CAP_INT_RENAME_EXCL`）。`MoveFileExW` 文件：未指定該旗標時不取代既有檔案 | `linkat` 需要檔案系統支援 hard link；不支援時（例如 FAT 系列）建立會失敗，依執行失敗整批回復，不會覆寫。目錄的不覆蓋改名只用於初始化，不支援時初始化回報失敗 | 未驗證 |
+| ASM-17 | Linux 的 `renameat2(RENAME_EXCHANGE)` 與 macOS 的 `renameatx_np(RENAME_SWAP)` 以一次操作交換兩個名稱，任何時間點兩個名稱都指向完整的檔案 | Linux `rename(2)`：`RENAME_EXCHANGE` 以原子方式交換 oldpath 與 newpath，兩者都須存在，Linux 3.15 起提供，須檔案系統支援。macOS `rename(2)`：`RENAME_SWAP` 交換來源與目的地，須檔案系統支援（`VOL_CAP_INT_RENAME_SWAP`） | 不支援時回傳 `EINVAL` 或 `ENOTSUP`，§6.3 改用 `renameat`，最後一次核對與取代之間留有空窗（ASM-07）。程序在交換後被終止時，目標是完整的新檔，舊檔留在暫存檔的名稱下，由 §6.5 清理 | 未驗證 |
+| ASM-18 | Windows 上，以 `FILE_READ_DATA` 開啟、共用模式只有 `FILE_SHARE_READ` 的檔案 handle 存在期間，其他程序無法改名、刪除或寫入該檔案 | `CreateFileW` 文件：沒有 `FILE_SHARE_DELETE` 時，其他程序以 delete 存取權開啟會失敗；沒有 `FILE_SHARE_WRITE` 時，以寫入存取權開啟會失敗 | ASM-08 的檔案版本。ASM-08 發現只有屬性存取權的 handle 不參與共用檢查，所以須帶 `FILE_READ_DATA`。關閉 handle 到 `MoveFileExW` 之間的空窗不受保護（§6.3） | 未驗證 |
+| ASM-19 | Windows 上，`CreateDirectoryW` 可在建立時指定 DACL，之後在目錄中建立的檔案繼承它；`GetSecurityInfo`、`SetSecurityInfo` 可經由 handle 讀取並設定檔案的 DACL，包含是否繼承上層 | `CreateDirectoryW` 文件：`lpSecurityAttributes` 指定新目錄的安全描述元。`SetSecurityInfo` 文件：`PROTECTED_DACL_SECURITY_INFORMATION` 使 DACL 不繼承上層 | 讀取原檔的 DACL 須有 `READ_CONTROL`，設定暫存檔的 DACL 須有 `WRITE_DAC`，檔案擁有者兩者都有。不成立時，取代後的輸出改用目錄繼承的 ACL（同 ASM-02），程式目錄則沿用上層的 ACL | 未驗證 |
+| ASM-20 | Linux 與 macOS 的 `flock(LOCK_EX \| LOCK_NB)`，在其他程序持有鎖定時以 `EWOULDBLOCK` 失敗；Windows 以共用模式 `0` 開啟的檔案，其他程序再開啟時以 `ERROR_SHARING_VIOLATION` 失敗。兩者都在程序結束時釋放 | Linux `flock(2)`：鎖定屬於 open file description，所有相關的 fd 關閉時釋放。macOS `flock(2)`：`LOCK_NB` 時以 `EWOULDBLOCK` 失敗。`CreateFileW` 文件：共用模式為 `0` 時，其他程序無法開啟該檔案 | `flock` 不屬於 POSIX，但 Linux 與 macOS 都提供。網路檔案系統不在範圍內。不成立時，兩個 rosamta 程序可能同時套用，這超出 AS-5 的範圍，§6.3 的核對仍然有效 | 未驗證 |
+| ASM-21 | Linux 與 macOS 上，以 `O_NONBLOCK` 開啟 FIFO 或裝置檔不會阻塞 | POSIX `open`：以 `O_RDONLY \| O_NONBLOCK` 開啟 FIFO 立即返回；支援非阻塞開啟的裝置檔也立即返回 | 只在判定類型與開檔之間被換成特殊檔案時才會遇到；開啟後以 handle 判定類型，不是一般檔案就不讀取（§6.3）。pilot P1 已這樣開檔，但沒有測試 FIFO | 未驗證 |
+
+### 7.8 文件出處
 
 - POSIX.1-2024：[`rename`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/rename.html)、[`link`／`linkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/link.html)、[`open`／`openat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/open.html)、[`unlink`／`unlinkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/unlink.html)、[`<sys/stat.h>`](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_stat.h.html)
-- macOS：[`fsync(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html)、[QA1118 Statically linked binaries on Mac OS X](https://developer.apple.com/library/archive/qa/qa1118/_index.html)
-- Windows：[`MoveFileExW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[`CreateFileW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[`GetFinalPathNameByHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)、[`FILE_ID_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[`BY_HANDLE_FILE_INFORMATION`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information)、[`FILE_DISPOSITION_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info)、[`FILE_LINK_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_link_information)、[`FILE_RENAME_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)、[`CreateSymbolicLinkW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw)、[Create symbolic links 使用者權限](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/create-symbolic-links)
+- Linux：[`rename(2)`](https://man7.org/linux/man-pages/man2/rename.2.html)、[`flock(2)`](https://man7.org/linux/man-pages/man2/flock.2.html)
+- macOS：[`fsync(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html)、[`flock(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)、[`rename(2)`（xnu 原始碼）](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/rename.2)、[QA1118 Statically linked binaries on Mac OS X](https://developer.apple.com/library/archive/qa/qa1118/_index.html)
+- Windows：[`MoveFileExW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[`CreateFileW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[`GetFinalPathNameByHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)、[`FILE_ID_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[`BY_HANDLE_FILE_INFORMATION`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information)、[`FILE_DISPOSITION_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info)、[`FILE_LINK_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_link_information)、[`FILE_RENAME_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)、[`CreateSymbolicLinkW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw)、[Create symbolic links 使用者權限](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/create-symbolic-links)、[`CreateDirectoryW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw)、[`GetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo)、[`SetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo)
+- Rust：[`std::env::home_dir`](https://doc.rust-lang.org/std/env/fn.home_dir.html)
