@@ -2,7 +2,9 @@
 #
 # test: runs the pilot tests on each platform as a regular user. Linux and
 #   macOS runners already run steps as a non-root user; on Windows the tests
-#   run as a newly created standard user (see ci/run-as-standard-user.ps1).
+#   run as a newly created standard user (see ci/run-as-standard-user.ps1),
+#   once with developer mode on and once with it off, because developer mode
+#   decides whether a standard user may create symbolic links (DC-001, P3).
 # dist: builds the release targets chosen in 05 §2.1 and checks that each
 #   binary depends only on libraries every installation of the OS has (DC-004).
 #
@@ -33,14 +35,34 @@ defaults:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}${{ matrix.devmode && format(', developer mode {0}', matrix.devmode) || '' }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        include:
+          - os: ubuntu-24.04
+          - os: macos-15
+          - os: windows-2025
+            devmode: 'on'
+          - os: windows-2025
+            devmode: 'off'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set developer mode
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+          if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+          $value = if ('${{ matrix.devmode }}' -eq 'on') { 1 } else { 0 }
+          Set-ItemProperty -Path $key -Name AllowDevelopmentWithoutDevLicense -Value $value -Type DWord
+
+      - name: Create the symbolic link pool
+        if: runner.os == 'Windows' && matrix.devmode == 'off'
+        shell: powershell
+        run: ./ci/make-link-pool.ps1
 
       - name: Install the pinned toolchain
         shell: bash
