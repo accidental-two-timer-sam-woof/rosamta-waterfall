@@ -151,6 +151,81 @@ USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱
 
 是否開放 `include` 也留給 §4 決定。開放時，靜態分析須自行展開被載入的範本。
 
+## 3. 套件結構
+
+本節把 03 C1–C4 的類別分配到 crate 與 module，並規定依賴方向。圖見 [uml.md](uml.md) 的 P1、P2；各類別的公開介面見 §4。
+
+### 3.1 crate 劃分
+
+程式以 Cargo workspace 分成四個 crate：
+
+| crate | 種類 | 內容 | 依賴的 workspace crate | 外部 crate |
+| --- | --- | --- | --- | --- |
+| `rosamta` | 執行檔 | 命令列介面（§9）。啟動時收集主機資訊，建立 platform 的實作，交給 core 的服務 | core、platform | 參數解析與 diff 的套件在 §9 選定；serde_json |
+| `rosamta-core` | 函式庫 | 03 的全部服務與資料型別，以及 `FileSystem`、`GitClient` 兩個 trait | 無 | toml_edit、minijinja、serde、serde_json、sha2 |
+| `rosamta-platform` | 函式庫 | `FileSystem` 的 Unix 與 Windows 實作、`GitClient` 的實作（呼叫 `git` 執行檔），以及主機資訊的收集 | core | rustix（Unix）、windows-sys（Windows） |
+| `rosamta-testkit` | 函式庫，只作 dev-dependency | 可注入故障與同步點的 `FileSystem`、建立測試用 home 的工具（§8） | core、platform | — |
+
+外部 crate 一律以 `=` 鎖定版本。toml_edit、minijinja、rustix、windows-sys 沿用 pilot 驗證過的版本；其餘在實作開始時鎖定，升級時以 MNT-002 的回歸設定集檢查。
+
+依賴方向是 `rosamta` → `rosamta-platform` → `rosamta-core`，執行檔也直接使用 core。trait 定義在 core，實作放在 platform，也就是依賴反轉：core 的服務只認得 trait，§8 與 06 可以把 platform 的實作換成 testkit 的實作，不必修改 core。
+
+不採用「單一 crate 加 `#[cfg]`」，理由有二：
+
+- core 的 `Cargo.toml` 不列 rustix 與 windows-sys，core 誤用平台 API 就無法編譯，不必靠 review 發現。
+- core 在三平台編譯出同一份邏輯，平台差異集中在 platform 的 `unix`、`windows` 兩個 module，PORT-001 的測試重點因此明確。
+
+core 不直接使用 `std::fs`、`std::process`、`std::net`、`std::env`。檔案操作經過 `FileSystem`，git 經過 `GitClient`；作業系統、主機名稱、home 與環境變數由執行檔在啟動時收集成 `HostContext`（C2）傳入，整次執行使用同一份（04 §2）。這項限制以 clippy 的 `disallowed-methods`、`disallowed-types` 設定在 core 檢查，CI 把警告當作錯誤。如此 core 沒有建立網路連線的途徑，唯一的對外連線是初始化時 `GitClient` 呼叫的 `git`，IF-013 只需檢查這一處。
+
+讀取來源目錄也經過 `FileSystem`：04 §3.1 要求實際讀取的檔案位於來源目錄內，A9、A24 會在開檔前替換路徑，所以來源與目標使用同一套不跟隨連結的開檔方式（§6）。只依檔案系統而定的行為，例如目錄是否區分大小寫，也由 `FileSystem` 回答（§6），core 不依作業系統猜測。
+
+### 3.2 core 的 module
+
+core 的 module 分成四層。依賴只能指向較低的層，或下表「可依賴」欄列出的同層 module，不得形成循環。
+
+| 層 | module | 03 的類別與型別 | 責任 | 可依賴 |
+| --- | --- | --- | --- | --- |
+| 0 基礎 | `diag` | `Diagnostics` | 診斷與來源位置（檔案、行、欄），所有 module 共用 | — |
+| 0 | `host` | `HostContext`、`Platform` | 主機資訊與環境變數的快照 | `diag` |
+| 0 | `path` | 目標路徑的型別 | `~` 與環境變數的展開、home 內的相對路徑、路徑比較（§6） | `diag`、`host` |
+| 0 | `fs` | `FileSystem`、`FileInspection` | trait，以及它使用的檔案身分、類型、內容指紋與目錄 handle | `diag`、`path` |
+| 0 | `layout` | — | 程式使用的位置（§5.1）與保留位置（§5.2） | `diag`、`host`、`path` |
+| 1 資料 | `config` | `ConfigLoader`、`EffectiveConfig`、`Manifest`、`OutputDefinition`、`Module`、`Field`、`Profile`、`ProfileRule`、`LocalSettings`、`Template` | 讀取四種設定檔與內建資源，合併內建輸出與覆寫（§5.3–§5.9） | 第 0 層 |
+| 1 | `docedit` | — | 保留格式的 TOML 編輯（§5.3） | `diag` |
+| 1 | `resolve` | `ValueResolver`、`ResolvedValues`、`ValueSource` | 四層覆寫與值的來源 | 第 0 層、`config` |
+| 1 | `template` | — | MiniJinja 環境、範本 loader、靜態引用、原樣複製來源的讀取 | 第 0 層、`config` |
+| 1 | `state` | `StateStore`、`StateFile`、`ManagedOutputRecord`、`ComparisonMetadata`、`StateLoadResult` | 狀態檔的格式、載入與原子提交（§5.10） | 第 0 層 |
+| 2 流程 | `plan` | `Planner`、`ApplyPlan`、`PlanItem` | 計畫與比較基準的判定（§5.11） | 第 0 層、`config`、`resolve`、`template`、`state` |
+| 2 | `preflight` | `PreflightChecker`、`AnalysisContext` | 整批預檢 | 第 0 層、`config`、`resolve`、`template`、`state`、`plan` |
+| 2 | `recovery` | `RecoveryManager`、`RecoveryReport` | 回復快照的保存與還原 | 第 0 層、`state` |
+| 2 | `exec` | `Executor`、`ApplyReport`、`ItemResult` | 執行計畫、製作接管備份（§5.12） | 第 0 層、`state`、`plan`、`recovery` |
+| 3 子指令 | `apply` | `ApplyService`、`ApplyRequest` | 預覽、摘要與套用的流程 | 第 0 層、`config`、`resolve`、`template`、`state`、第 2 層 |
+| 3 | `manage` | `ManifestService`、`OutputPropertyPatch`、`OperationResult` | 納入、修改屬性、停止管理（§5.13） | 第 0 層、`config`、`docedit`、`state` |
+| 3 | `query` | `QueryService`、`OutputSummary`、`OutputDescription`、`ResolvedValueDescription` | 引用、輸出與欄位值的查詢 | 第 0 層、`config`、`resolve`、`template` |
+| 3 | `init` | `InitializationService`、`GitClient`、`InitializationRequest`、`InitializationResult` | 初始化 | 第 0 層、`config`、`docedit`、`apply` |
+
+與 03 C4 不同的依賴：
+
+- `ConfigLoader` 經由 `FileSystem` 讀取來源目錄，理由見 §3.1。C4 只畫出 `Planner`、`Executor` 等對 `FileSystem` 的依賴。
+- `PreflightChecker` 使用 `template` 的靜態引用，在渲染前找出拼錯的欄位（§2.3）。
+- `QueryService` 使用 `template` 的靜態引用回答引用查詢。04 §2 已要求查詢共用範本的引用資訊，C4 沒有畫出。
+- `ManifestService` 使用 `config` 取得內建輸出的名稱，使用 `docedit` 修改設定檔。C4 只畫出 `StateStore` 與 `FileSystem`。
+- 摘要（FR-QRY-005）是 `ApplyService` 的一種模式，不屬於 `QueryService`，因為它與預覽共用 `Planner`（§1.2）。
+
+依賴方向由 module 的 `use` 決定，編譯器不會檢查層級。§11 逐一核對每個 module 的 `use`，CI 另以腳本檢查 core 各 module 引用的 `crate::` 路徑都在上表的範圍內。
+
+### 3.3 platform 與執行檔的 module
+
+| crate | module | 責任 |
+| --- | --- | --- |
+| `rosamta-platform` | `unix` | `FileSystem` 的 Linux 與 macOS 實作，以 rustix 呼叫 `openat`、`renameat`、`unlinkat`、`linkat` 等以目錄 fd 為基準的操作（§7.3） |
+| `rosamta-platform` | `windows` | `FileSystem` 的 Windows 實作，以 windows-sys 呼叫 `CreateFileW`、`SetFileInformationByHandle`、`MoveFileExW` 等操作（§7.3） |
+| `rosamta-platform` | `host` | 收集 `HostContext`：作業系統、主機名稱（IF-011）、home 與環境變數 |
+| `rosamta-platform` | `git` | `GitClient` 的實作，以 `std::process` 執行系統上的 `git`（§2.1） |
+| `rosamta` | `cli` 等 | 子指令、參數與輸出格式（§9） |
+
+`unix` 與 `windows` 以 `#[cfg]` 選擇，對外只提供同一個 `FileSystem` 實作的建構函式。
+
 ## 7. 平台假設清單
 
 本節列出設計依賴、而 Rust 標準函式庫不保證的作業系統行為。每項假設以 `ASM-NN` 編號，列出官方文件依據、文件保證的範圍，以及 pilot 結果（`prototypes/pilot/`）。§6 的演算法只依賴本節列出的行為；06 為每個 `ASM-NN` 安排測試情境（§13）。
