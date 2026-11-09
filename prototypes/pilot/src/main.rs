@@ -5,12 +5,16 @@
 //! - `pilot p2-write <target> <size> <method>` replaces `target` forever,
 //!   alternating payloads `A` and `B`, and prints `ready` after the first
 //!   complete replacement.
+//! - `pilot p1-swap <swap> <victim> <aside> <other>` replaces a directory
+//!   once and prints `swapped` or `blocked <error>`.
+//! - `pilot p1-churn <swap> <victim> <aside> <other> <stop>` keeps replacing
+//!   a directory until `stop` exists, then prints the counts.
 
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use rosamta_pilot::{atomic, payload, platform};
+use rosamta_pilot::{atomic, bound, payload, platform};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -35,6 +39,30 @@ fn main() -> ExitCode {
             };
             p2_write(PathBuf::from(target), size, method)
         }
+        ["p1-swap", swap, victim, aside, other] => {
+            let Some(swap) = bound::Swap::parse(swap) else {
+                return usage();
+            };
+            match swap.apply(victim.as_ref(), aside.as_ref(), other.as_ref()) {
+                Ok(()) => println!("swapped"),
+                Err(e) => println!("blocked {e}"),
+            }
+            ExitCode::SUCCESS
+        }
+        ["p1-churn", swap, victim, aside, other, stop] => {
+            let Some(swap) = bound::Swap::parse(swap) else {
+                return usage();
+            };
+            let (cycles, blocked) = bound::churn(
+                swap,
+                victim.as_ref(),
+                aside.as_ref(),
+                other.as_ref(),
+                stop.as_ref(),
+            );
+            println!("cycles={cycles} blocked={blocked}");
+            ExitCode::SUCCESS
+        }
         _ => usage(),
     }
 }
@@ -56,6 +84,10 @@ fn p2_write(target: PathBuf, size: usize, method: atomic::Method) -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: pilot env | pilot p2-write <target> <size> <method>");
+    eprintln!(
+        "usage: pilot env | pilot p2-write <target> <size> <method>\n\
+         \x20      | pilot p1-swap <swap> <victim> <aside> <other>\n\
+         \x20      | pilot p1-churn <swap> <victim> <aside> <other> <stop>"
+    );
     ExitCode::from(2)
 }
