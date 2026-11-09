@@ -164,7 +164,7 @@ USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱
 | `rosamta` | 執行檔 | 命令列介面（§9）。啟動時收集主機資訊，建立 platform 的實作，交給 core 的服務 | core、platform | 參數解析與 diff 的套件在 §9 選定；serde_json |
 | `rosamta-core` | 函式庫 | 03 的全部服務與資料型別，以及 `FileSystem`、`GitClient` 兩個 trait | 無 | toml_edit、minijinja、serde、serde_json、sha2 |
 | `rosamta-platform` | 函式庫 | `FileSystem` 的 Unix 與 Windows 實作、`GitClient` 的實作（呼叫 `git` 執行檔），以及主機資訊的收集 | core | rustix（Unix）、windows-sys（Windows） |
-| `rosamta-testkit` | 函式庫，只作 dev-dependency | 可注入故障與同步點的 `FileSystem`、建立測試用 home 的工具（§8） | core、platform | — |
+| `rosamta-testkit` | 函式庫，只作 dev-dependency | 可注入故障的 `FileSystem`、在同步點執行注入的 `SyncHook`、建立測試用 home 的工具（§8） | core、platform | — |
 
 外部 crate 一律以 `=` 鎖定版本。toml_edit、minijinja、rustix、windows-sys 沿用 pilot 驗證過的版本；其餘在實作開始時鎖定，升級時以 MNT-002 的回歸設定集檢查。
 
@@ -188,7 +188,7 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | 0 基礎 | `diag` | `Diagnostics` | 診斷與來源位置（檔案、行、欄），所有 module 共用 | — |
 | 0 | `host` | `HostContext`、`Platform` | 主機資訊與環境變數的快照 | `diag` |
 | 0 | `path` | 目標路徑的型別 | `~` 與環境變數的展開、home 內的相對路徑、路徑比較（§6） | `diag`、`host` |
-| 0 | `fs` | `FileSystem`、`FileInspection` | trait，以及它使用的檔案身分、類型、內容指紋與目錄 handle | `diag`、`path` |
+| 0 | `fs` | `FileSystem`、`FileInspection` | trait，以及它使用的檔案身分、類型、內容指紋與目錄 handle；同步點與 `SyncHook` trait（§8.2） | `diag`、`path` |
 | 0 | `layout` | — | 程式使用的位置（§5.1）與保留位置（§5.2） | `diag`、`host`、`path` |
 | 1 資料 | `config` | `ConfigLoader`、`EffectiveConfig`、`Manifest`、`OutputDefinition`、`Module`、`Field`、`Profile`、`ProfileRule`、`LocalSettings`、`Template` | 讀取四種設定檔與內建資源，合併內建輸出與覆寫（§5.3–§5.9） | 第 0 層 |
 | 1 | `docedit` | — | 保留格式的 TOML 編輯（§5.3） | `diag` |
@@ -965,3 +965,122 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 - macOS：[`fsync(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html)、[`flock(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)、[`rename(2)`（xnu 原始碼）](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/rename.2)、[QA1118 Statically linked binaries on Mac OS X](https://developer.apple.com/library/archive/qa/qa1118/_index.html)
 - Windows：[`MoveFileExW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[`CreateFileW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[`GetFinalPathNameByHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)、[`FILE_ID_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[`BY_HANDLE_FILE_INFORMATION`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information)、[`FILE_DISPOSITION_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info)、[`FILE_LINK_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_link_information)、[`FILE_RENAME_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)、[`CreateSymbolicLinkW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw)、[Create symbolic links 使用者權限](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/create-symbolic-links)、[`CreateDirectoryW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw)、[`GetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo)、[`SetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo)
 - Rust：[`std::env::home_dir`](https://doc.rust-lang.org/std/env/fn.home_dir.html)
+
+## 8. 可測試性設計
+
+本節說明測試如何替換 rosamta 的外部依賴、在指定的時間點改動檔案，以及注入失敗。04 §5 的情境與 06 的測試，都以這些機制撰寫。
+
+### 8.1 可替換的依賴
+
+core 的行為只取決於下列依賴，每一項都由呼叫端傳入（§3.1），測試可以換成自己的版本：
+
+| 依賴 | 正式執行 | 測試 |
+| --- | --- | --- |
+| `HostContext`：作業系統、主機名稱、home、環境變數 | 執行檔啟動時收集（§3.3、§6.1） | 直接建構，home 指向測試建立的暫存目錄 |
+| 目前時間，用於批次編號（§5.1） | 系統時間 | 固定的時間，用來重現批次編號重複時加上 `-2` 的情況 |
+| `FileSystem` | platform 的實作 | platform 的實作；需要注入失敗時，以 testkit 的 `FaultFs` 包裝（§8.3） |
+| `SyncHook` | 什麼都不做的實作 | testkit 的 `SyncScript`，在指定的同步點執行注入（§8.2） |
+| `GitClient` | 呼叫 `git`（§3.3） | 從本機的測試 repo clone，或回傳指定錯誤的假實作 |
+
+執行檔的測試以子程序執行 rosamta，透過 `HOME`（Windows 為 `USERPROFILE`）與 `XDG_*` 環境變數把 home 與三個程式目錄指向暫存目錄（§6.1）。標準輸出與標準錯誤接到 pipe，所以不是終端機（IF-009）。
+
+不提供存在記憶體中的假 `FileSystem`。要驗證的正是平台的行為：連結、改名、共用模式與權限，假實作只會驗證假實作本身。純邏輯不需要檔案系統：§5.11 的判定以觀測與紀錄為輸入，單元測試直接建構觀測值；路徑正規化、設定檔與狀態檔的解析也一樣。
+
+### 8.2 同步點
+
+同步點是 core 呼叫 `SyncHook` 的位置，用來在指定的時間點讓「外部程式」改動檔案。每次呼叫傳入同步點、操作種類，以及目標在 home 內的相對路徑：
+
+| 同步點 | 位置 |
+| --- | --- |
+| `AfterPreflight` | 預檢通過，執行任何操作之前；每個批次一次 |
+| `BeforeCapture` | §6.3 步驟 1、2 通過，開檔擷取快照、製作備份，或讀取狀態檔之前 |
+| `AfterCapture` | 副本已寫好，與觀測的版本比較之前 |
+| `BeforeOperation` | 最後一次核對通過，執行建立、取代、刪除、變更權限或建立目錄的系統呼叫之前；Windows 此時仍持有目錄與目標的 handle |
+| `AfterOperation` | 系統呼叫完成，§6.3 步驟 4 的重檢之前 |
+| `BeforeRecheck` | 所有項目都處理完，§6.6 步驟 3 之前 |
+| `BeforeCommit` | §6.6 步驟 3 通過，提交狀態之前 |
+| `BeforeCompletion` | 狀態已提交或無須提交，§6.6 步驟 5 之前 |
+| `BeforeRollback` | 決定回復後，處理第一個項目之前 |
+
+操作種類分成四組：狀態檔的載入、擷取、提交與回復；目標的擷取快照、製作備份、建立、取代、刪除、變更權限、建立目錄；回復時的刪除、取代、建立、變更權限與刪除目錄；管理與初始化的 manifest 與本機設定修改、來源副本的建立、來源目錄的移入。
+
+`BeforeOperation` 必須落在最後一次核對與系統呼叫之間，所以 `FileSystem` 的每個操作分成兩次呼叫：第一次完成走訪與核對，回傳持有 handle 的物件；第二次執行系統呼叫，以及交換或移開後的核對（§6.3）。介面在 §4 定義。§6.3 所說的剩下的空窗，位於第二次呼叫的內部，同步點到不了。
+
+同步點只放在 core，platform 不知道測試的存在。正式執行傳入什麼都不做的 `SyncHook`，每個同步點多一次函式呼叫，成本可以忽略。不用編譯期的 feature 開關：那樣測試的程式就不是發佈的程式。
+
+testkit 的 `SyncScript` 讓測試以「同步點、操作種類、路徑、第幾次」指定時間點，並登記要執行的注入，例如以 `std::fs` 替換父目錄、就地修改目標或換入 FIFO。`SyncScript` 記錄每一個到達的同步點，以及每次注入是否成功：
+
+- 登記的同步點沒有到達時，測試失敗。04 §5 說「未到達同步點時重測」；同步點是確定的，沒有到達表示測試寫錯，而不是運氣不好。
+- 注入被平台擋下時（例如 Windows 的 `ERROR_SHARING_VIOLATION`），測試確認擋下的是這次注入，並核對原操作依計畫完成（04 §5）。
+
+注入在同一個程序內執行。Windows 的共用模式作用在 handle 之間，與是否同一個程序無關；Linux 與 macOS 的改名與刪除也不區分程序，所以結果與真正的外部程式相同。需要另一個程序持續改動的壓力測試（如 pilot P1 的 300 輪），由 testkit 另外啟動子程序。
+
+### 8.3 故障注入
+
+testkit 的 `FaultFs` 包裝任一 `FileSystem` 實作，把呼叫轉給被包裝的實作；符合條件（操作種類、路徑、第幾次）的呼叫改為回傳指定的錯誤，例如權限不足、空間不足或 I/O 錯誤。用途：
+
+| 用途 | 注入方式 | 04 §5 情境 |
+| --- | --- | --- |
+| 中途寫入失敗 | 第 N 個目標的建立或取代回傳權限不足。另外以移除目錄寫入權限的方式實測一次，驗證平台的實際錯誤（FR-APL-002 的驗收方式） | A6 |
+| 狀態提交失敗、提交後的寫入確認失敗 | 狀態檔的取代，或 §6.6 步驟 5 讀取狀態檔時回傳錯誤 | A6、A20、A23、A25 |
+| 部分回復失敗 | 回復時某一項的操作回傳錯誤 | A6 |
+| 空間不足 | 暫存檔或快照的寫入回傳 `ENOSPC`、`ERROR_DISK_FULL`；06 另以容量有限的檔案系統實測 | A8 |
+| 停止管理的兩次寫入之間失敗 | manifest 的取代回傳錯誤 | A5 |
+
+`FaultFs` 只模擬呼叫失敗。外部程式的改動用同步點（§8.2），因為它必須真的改變檔案系統，§6.3 的核對才有東西可以發現。程序中止（REL-001、REL-002、A6、A13）也不用 `FaultFs`：如同 pilot P2，執行檔的測試啟動 rosamta，在隨機的時間點終止它。
+
+### 8.4 測試的位置
+
+| 位置 | 內容 | 使用 testkit |
+| --- | --- | --- |
+| core 的單元測試（`#[cfg(test)]`） | 純邏輯：路徑正規化、位置鍵的比較、§5.11 的判定、設定檔與狀態檔的解析、範本的引用分析 | 否 |
+| core 的 integration test（`rosamta-core/tests/`） | 服務搭配真實的檔案系統：觀測與綁定、執行與回復，以及以同步點與故障注入撰寫的情境 | 是 |
+| platform 的測試 | 每個 `ASM-NN` 的平台行為，延續 pilot 的測試 | 否 |
+| 執行檔的測試（`rosamta/tests/`） | 子指令、輸出格式、exit code、程序中止 | 是，用來建立測試用的 home |
+
+core 的單元測試不能使用 testkit。testkit 依賴 core；core 的單元測試若把 testkit 列為 dev-dependency，Cargo 會編出兩份 core，testkit 回傳的型別與受測的 core 型別不同，trait 的實作對不上。integration test 把 core 當成一般的函式庫連結，只有一份 core，所以注入故障的測試都放在 integration test 或執行檔的測試。
+
+三平台的 CI 沿用 pilot 的設定：Linux 與 macOS 以一般使用者執行，Windows 另建標準使用者，並在開發人員模式開啟與關閉時各跑一次（§7.1）。
+
+### 8.5 04 §5 情境與同步點
+
+下表列出 04 §5 中指定了時間點的情境，以及對應的同步點（括號內為操作種類）。「預期」欄是依 §6 的處理方式，06 依此撰寫驗收條件；各情境共同的部分（回傳 `1`、回復其他可安全處理的項目、逐項回報）不重複寫出。
+
+| 情境 | 04 §5 的時間點 | 同步點 | 預期 |
+| --- | --- | --- | --- |
+| A10 | 預檢剛通過 | `AfterPreflight` | 走訪時父目錄的身分不符，不執行操作 |
+| A10 | 最後一次路徑檢查通過，尚未寫入或刪除 | `BeforeOperation`（建立、取代、刪除） | Windows 擋下替換；Linux 與 macOS 的操作落在原目錄，步驟 4 發現後經由 handle 復原（ASM-06） |
+| A10 | 回復的最後一次檢查通過，實際操作前 | `BeforeOperation`（回復的各操作） | 同上；該項保留並回報 |
+| A14 | 重檢前 | `BeforeRecheck` | 提交前重檢不符，不提交狀態 |
+| A14 | 最後一次目標重檢後，狀態替換前 | `BeforeCommit` | 狀態照常提交，完成確認發現不符，回復原狀態 |
+| A15 | 最後一次確認位置為空後，實際建立前 | `BeforeOperation`（建立） | 不覆蓋的建立失敗，外部檔案保留 |
+| A15 | 狀態提交前替換本批建立的檔案 | `BeforeCommit` | 完成確認發現身分不符，該檔案不動，回復原狀態 |
+| A16 | 擷取快照或製作備份的最後一次路徑檢查後，開檔前替換父目錄 | `BeforeCapture`（擷取快照、製作備份） | Windows 擋下替換；Linux 與 macOS 經由持有的目錄讀到原檔，擷取後的步驟 4 發現路徑改變，不使用副本 |
+| A16 | 擷取時改動原檔，到擷取或核對結束才改回 | `BeforeCapture` 改動，操作結束後改回 | 讀到的內容與觀測的版本不符 |
+| A16 | 擷取時改動，擷取完成後、核對副本前改回 | `BeforeCapture` 改動，`AfterCapture` 改回 | 比較的是實際讀到的內容，仍然不符 |
+| A16 | 回復前替換或破壞某項快照 | `BeforeRollback` | 快照的 SHA-256 不符，不使用；該項保留並回報 |
+| A17 | 寫入完成後，第一次依路徑查驗身分前 | `AfterOperation`（建立、取代） | 步驟 4 發現身分不符，替換進來的檔案不動 |
+| A17 | 最後一次目標重檢後，狀態替換前 | `BeforeCommit` | 完成確認發現不符 |
+| A17 | 最後一次重檢後，判定完成前（不提交狀態） | `BeforeCompletion` | 完成確認發現不符 |
+| A17 | 最後一次狀態重檢後，判定完成前移除紀錄 | `BeforeCompletion` | 完成確認發現狀態檔不是首次載入的版本，保留外部的改動 |
+| A18 | 最後一次檢查後換入特殊檔案 | `BeforeOperation`（取代、刪除） | Windows 擋下替換；Linux 與 macOS 交換或移開後發現類型不符，移回原位保留 |
+| A19 | 預檢後、重檢前就地修改 | `AfterPreflight` | 步驟 2 版本不符 |
+| A19 | 最後一次內容核對後，實際清除或覆寫前 | `BeforeOperation`（取代、刪除） | Windows 擋下寫入（ASM-18）；Linux 與 macOS 交換或移開後發現版本不符，換回原位，保留修改 |
+| A20 | 首次載入、擷取原狀態的最後一次路徑檢查後 | `BeforeCapture`（狀態檔的載入、擷取） | 同 A16 的第一列，替代位置的狀態檔不會被讀取 |
+| A20 | 提交的最後一次路徑檢查後 | `BeforeOperation`（狀態檔的提交） | 同 A10 的第二列 |
+| A20 | 提交後寫入確認失敗，回復的最後一次路徑檢查後 | `FaultFs` 使完成確認失敗，再於 `BeforeOperation`（狀態檔的回復）替換 | 同 A10 的第三列；回報原狀態是否已還原 |
+| A21 | 回復重檢前就地修改 | `BeforeRollback` | 回復前的核對不符，保留修改 |
+| A21 | 最後一次內容核對後，實際回復前 | `BeforeOperation`（回復的刪除、取代） | Windows 擋下；Linux 與 macOS 移開或交換後發現，換回原位，保留修改 |
+| A22 | 完成清除後、重檢前 | `BeforeRecheck` | 提交前重檢發現目標存在 |
+| A22 | 最後一次目標重檢後，狀態替換前 | `BeforeCommit` | 完成確認發現目標存在，外部檔案保留 |
+| A22 | 回復最後一次確認路徑為空後，還原舊檔前 | `BeforeOperation`（回復的建立） | 不覆蓋的建立失敗，外部檔案保留，回報該路徑無法回復 |
+| A23 | 提交的最後一次內容核對後，替換前 | `BeforeOperation`（狀態檔的提交） | Windows 擋下；Linux 與 macOS 交換後發現版本不符，換回原狀態檔 |
+| A23 | 回復的最後一次內容核對後，回寫前 | `FaultFs` 使完成確認失敗，再於 `BeforeOperation`（狀態檔的回復）修改 | 同上，保留外部的修改，回報狀態無法回復 |
+| A25 | 擷取原狀態時改寫，核對前改回 | `BeforeCapture`（狀態檔的擷取）改寫，`AfterCapture` 改回 | 同 A16 的第三列，不改動任何目標 |
+| A25 | 提交後寫入確認失敗，以遭改動的副本回復 | `FaultFs` 使完成確認失敗，`BeforeRollback` 改動副本 | 副本的 SHA-256 不符，保留現況，回報狀態無法回復 |
+| A26 | 最後一次目標重檢後，批次完成前（須寫入新狀態） | `BeforeCommit` 或 `BeforeCompletion` | 完成確認發現不符，回復原狀態 |
+| A26 | 同上（全批免寫狀態） | `BeforeCompletion` | 完成確認發現不符 |
+
+不依同步點的情境：A5 停止管理的兩次寫入之間以 `FaultFs` 注入失敗，程序中止則以執行檔的測試終止；A5 最後一個情境在 `AfterPreflight` 執行停止管理，依 §6.7 會因取不到鎖定而失敗。A7、A12 用 `BeforeOperation`（來源目錄的移入、來源副本的建立、manifest 與本機設定的修改）；A7 的「下載途中才被占用」由假的 `GitClient` 在 clone 期間建立檔案。A24 在 `AfterPreflight` 與第一個項目的 `AfterOperation` 替換來源；執行期參照無法取得內容的情境，在 §4 定義參照後補上。A6、A13 的程序中止與 A8 見 §8.3。
+
+A16 第三列的預期依 §6.5 的快照方式而定：快照是邊讀邊計算的複製，核對的是讀到的位元組，所以「改回」不會讓錯誤的副本通過。若改用 hard link 當快照，副本就是原檔本身，改回之後副本是正確的版本，這一列的預期就不成立；這是 §6.5 不用 hard link 當快照的另一個理由。
