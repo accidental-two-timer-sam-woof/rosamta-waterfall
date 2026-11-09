@@ -14,4 +14,4 @@ cargo test --locked -- --nocapture
 
 每項結果會輸出一行 `PILOT-RESULT`。P2 可用環境變數 `PILOT_P2_KILLS`（預設 100）調整終止次數，用 `PILOT_SEED` 重現同一組終止時間點。
 
-工具鏈版本固定在 `rust-toolchain.toml`。
+工具鏈版本固定在 `rust-toolchain.toml`。CI（`.github/workflows/pilot.yml`）在 Linux、macOS、Windows 以一般使用者身分執行測試；Windows 會另建標準使用者來執行（`ci/run-as-standard-user.ps1`）。CI 也會建置 05 §2.1 的各個發佈目標，檢查執行檔只依賴作業系統內建的函式庫。
