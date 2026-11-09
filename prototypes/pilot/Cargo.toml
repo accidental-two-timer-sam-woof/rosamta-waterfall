@@ -1,0 +1,21 @@
+[package]
+name = "rosamta-pilot"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+description = "Feasibility pilot for the rosamta detailed design; not reused by the implementation"
+
+[[bin]]
+name = "pilot"
+path = "src/main.rs"
+
+[dependencies]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
