@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | P1 | 重檢與實際操作綁定：從 home 逐層開目錄、不跟隨連結，透過持有的 handle 操作；另一個程序在預檢後或最後一次檢查後替換父目錄時，不會改到替代位置（DC-002、SEC-002，04 §5 A10、A16、A20） | `tests/p1_bound_ops.rs` |
 | P2 | 單檔原子替換：強制終止程序 100 次，目標只會是完整的舊檔或新檔；未宣告權限時保留原權限（REL-001、REL-002） | `tests/p2_atomic_replace.rs` |
+| P3 | 符號連結的接管與回復：在備份目錄為連結本身建立 hard link，再以一次 rename 換成一般檔案；回復時把備份 rename 回原位。所指檔案不變，過程中不建立新的符號連結；另記錄目前的使用者能否建立符號連結（SEC-002、DC-001、DC-003，04 §5 A3） | `tests/p3_symlink.rs` |
 | P4 | toml_edit 保留格式的編輯與錯誤位置（05 §2.2） | `tests/p4_toml_edit.rs` |
 | P5 | MiniJinja 的靜態引用與錯誤訊息（05 §2.3） | `tests/p5_minijinja.rs` |
 

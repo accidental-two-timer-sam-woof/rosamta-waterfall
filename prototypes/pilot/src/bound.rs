@@ -306,7 +306,7 @@ mod unix {
     use std::ffi::OsStr;
     use std::fs::File;
     use std::io::{self, Read, Write};
-    use std::os::fd::OwnedFd;
+    use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
     use std::path::Path;
 
     pub struct Dir {
@@ -359,6 +359,10 @@ mod unix {
 
         pub fn identity(&self) -> io::Result<Identity> {
             Ok(entry_of(&rustix::fs::fstat(&self.fd)?).identity)
+        }
+
+        pub fn fd(&self) -> BorrowedFd<'_> {
+            self.fd.as_fd()
         }
 
         pub fn entry(&self, name: &OsStr) -> io::Result<Option<Entry>> {
@@ -442,13 +446,13 @@ mod unix {
 }
 
 #[cfg(windows)]
-mod windows {
+pub(crate) mod windows {
     use super::{Entry, Identity, Kind};
     use std::ffi::{OsStr, OsString};
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
-    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
     use std::path::{Path, PathBuf};
     use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
@@ -474,7 +478,7 @@ mod windows {
             .collect()
     }
 
-    fn open(
+    pub(crate) fn open(
         path: &Path,
         access: u32,
         share: u32,
@@ -501,7 +505,7 @@ mod windows {
         Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
     }
 
-    fn info<T>(handle: &impl AsRawHandle, class: i32) -> io::Result<T> {
+    pub(crate) fn info<T>(handle: &impl AsRawHandle, class: i32) -> io::Result<T> {
         let mut value = std::mem::MaybeUninit::<T>::zeroed();
         // SAFETY: the buffer is a T of the size passed in, matching `class`.
         let ok = unsafe {
@@ -519,7 +523,7 @@ mod windows {
         Ok(unsafe { value.assume_init() })
     }
 
-    fn entry_of(handle: &impl AsRawHandle) -> io::Result<Entry> {
+    pub(crate) fn entry_of(handle: &impl AsRawHandle) -> io::Result<Entry> {
         let tag: FILE_ATTRIBUTE_TAG_INFO = info(handle, FileAttributeTagInfo)?;
         let id: FILE_ID_INFO = info(handle, FileIdInfo)?;
         let kind = if tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
@@ -565,7 +569,7 @@ mod windows {
     /// read and write, so our own work inside the directory is not blocked.
     const DIR_ACCESS: u32 = FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
     const DIR_SHARE: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE;
-    const NO_FOLLOW: u32 = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
+    pub(crate) const NO_FOLLOW: u32 = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
 
     impl Dir {
         pub fn open_root(path: &Path) -> io::Result<Dir> {
@@ -611,6 +615,14 @@ mod windows {
 
         pub fn identity(&self) -> io::Result<Identity> {
             Ok(entry_of(&self.handle)?.identity)
+        }
+
+        pub fn handle(&self) -> BorrowedHandle<'_> {
+            self.handle.as_handle()
+        }
+
+        pub fn path(&self) -> &Path {
+            &self.path
         }
 
         pub fn entry(&self, name: &OsStr) -> io::Result<Option<Entry>> {

@@ -5,5 +5,6 @@
 
 pub mod atomic;
 pub mod bound;
+pub mod link;
 pub mod payload;
 pub mod platform;
