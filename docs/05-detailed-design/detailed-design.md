@@ -734,7 +734,7 @@ Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保�
 | --- | --- | --- |
 | 建立 | 暫存檔寫好後 `linkat(P, 暫存檔, P, N)`，再以 `unlinkat` 移除暫存檔的名稱。N 已存在時 `linkat` 以 `EEXIST` 失敗，不覆蓋（ASM-16） | `MoveFileExW(暫存檔, N, MOVEFILE_WRITE_THROUGH)`，不指定 `MOVEFILE_REPLACE_EXISTING`，N 已存在時失敗（ASM-16） |
 | 取代 | 交換式改名：以 `renameat2(RENAME_EXCHANGE)`（Linux）或 `renameatx_np(RENAME_SWAP)`（macOS）交換暫存檔與 N（ASM-17）。交換後，暫存檔的名稱指向被取代的檔案；核對它的身分與版本仍是觀測所見，不符時再交換一次換回來 | 以 `FILE_READ_DATA` 開啟目標，共用模式只有 `FILE_SHARE_READ`，核對身分與版本；持有期間其他程序無法改名、刪除或寫入目標（ASM-18）。核對後關閉，立即 `MoveFileExW(MOVEFILE_REPLACE_EXISTING \| MOVEFILE_WRITE_THROUGH)`（ASM-02） |
-| 刪除 | 以 `renameat` 把 N 改成暫存檔名稱，核對它的身分與版本，相符才 `unlinkat`；不符時以「建立」的方式移回 N | 以 `DELETE \| FILE_READ_DATA` 開啟，共用模式只有 `FILE_SHARE_READ`，核對身分與版本後設定 `FileDispositionInfo`（ASM-10、ASM-18） |
+| 刪除 | 以 `renameat` 把 N 改成暫存檔名稱，核對它的身分與版本，相符才 `unlinkat`；不符時以不覆蓋的改名移回 N（ASM-16）。被換入的可能是目錄，`linkat` 無法為目錄建立名稱，所以不用「建立」的方式 | 以 `DELETE \| FILE_READ_DATA` 開啟，共用模式只有 `FILE_SHARE_READ`，核對身分與版本後設定 `FileDispositionInfo`（ASM-10、ASM-18） |
 | 變更權限 | `openat(O_NOFOLLOW \| O_NONBLOCK)` 開啟，核對身分與版本後 `fchmod` | 不適用（§5.4） |
 | 建立目錄 | `mkdirat(P, N)`，再以 `O_NOFOLLOW` 開啟並記下身分 | `CreateDirectoryW`，再依 §6.1 開啟並記下身分 |
 
@@ -854,8 +854,8 @@ SRS AS-5 假設同一組目標同時只有一個 rosamta 程序在套用；03 §
 | 是否區分大小寫 | 預設區分；目錄有 casefold 屬性（`FS_CASEFOLD_FL`）時不分 | 依 `fpathconf(_PC_CASE_SENSITIVE)`；APFS 預設不分 | 預設不分；目錄設定了區分大小寫（`FILE_CS_FLAG_CASE_SENSITIVE_DIR`）時區分 |
 | 建立 | `linkat`，不覆蓋 | 同 Linux | `MoveFileExW`，不指定取代 |
 | 取代 | `renameat2(RENAME_EXCHANGE)` 後核對；不支援時 `renameat` | `renameatx_np(RENAME_SWAP)` 後核對；不支援時 `renameat` | 持有 handle 核對後，`MoveFileExW` 取代 |
-| 刪除 | 移開、核對後 `unlinkat` | 同 Linux | handle 的 `FileDispositionInfo` |
-| 目錄的不覆蓋改名（初始化） | `renameat2(RENAME_NOREPLACE)` | `renameatx_np(RENAME_EXCL)` | `MoveFileExW`，不指定取代 |
+| 刪除 | 移開、核對後 `unlinkat`；不符時 `renameat2(RENAME_NOREPLACE)` 移回 | 移開、核對後 `unlinkat`；不符時 `renameatx_np(RENAME_EXCL)` 移回 | handle 的 `FileDispositionInfo` |
+| 不覆蓋的改名（初始化、刪除時移回） | `renameat2(RENAME_NOREPLACE)` | `renameatx_np(RENAME_EXCL)` | `MoveFileExW`，不指定取代 |
 | 權限 | 權限位元；新檔為 `0666` 去掉 umask | 同 Linux | 不套用 `permissions`；有明確項目的 DACL 複製到新檔 |
 | 程式目錄的存取限制 | `0700` | 同 Linux | 不繼承的 DACL：本人、`SYSTEM`、`Administrators` |
 | 視為連結的目標 | 符號連結 | 同 Linux | 只有 `IO_REPARSE_TAG_SYMLINK`；其他 reparse point 屬於其他類型 |
@@ -875,14 +875,14 @@ pilot 結果分四種：
 
 - 通過：官方文件有保證，pilot 在三平台的結果也相符。
 - 有條件：pilot 在三平台都相符，但相關行為官方文件沒有寫明，或須由設計另外確保某個前提。條件寫在「保證範圍與條件」欄。
-- 未驗證：pilot 沒有重現這個行為：無法重現，例如需要重新開機；或是 §6 新增、pilot 還沒有涵蓋的行為。須寫明假設不成立時的後果，以及由 pilot 或 06 如何驗證。
+- 未驗證：pilot 無法重現這個行為，例如需要重新開機。須寫明假設不成立時的後果，以及由 pilot 或 06 如何驗證。
 - 不可行：這個做法無法滿足需求，須改變設計或修訂 SRS（04 §3.3 末段）。
 
-本版沒有「不可行」的項目。「未驗證」的是 ASM-15，以及 §7.7 的 ASM-16–ASM-21。P4、P5 驗證的是選定套件的行為，不屬於平台假設，結果見 §2.2、§2.3；兩者在三平台都通過。
+本版沒有「不可行」的項目。「未驗證」的只有 ASM-15。P4、P5 驗證的是選定套件的行為，不屬於平台假設，結果見 §2.2、§2.3；兩者在三平台都通過。
 
 ### 7.1 驗證環境
 
-證據來自 pilot workflow 的 CI run 42634818704，P1–P5 與發佈檢查全部通過。runner 映像檔固定版本；正式支援的平台版本由 06 決定（PORT-001）。
+證據來自 pilot workflow 的 CI run 42634818704，P1–P5 與發佈檢查全部通過。§7.7 的 P6 結果來自 CI run 42785134928，這個 run 也重跑了 P1–P5 與發佈檢查，全部通過；環境與下表相同，只有 ubuntu runner 的 kernel 為 7.0.0-1014-aws。runner 映像檔固定版本；正式支援的平台版本由 06 決定（PORT-001）。
 
 | 環境 | 作業系統 | 測試目錄的檔案系統 | 執行身分 |
 | --- | --- | --- | --- |
@@ -908,7 +908,7 @@ Windows 的開發人員模式以登錄值 `AllowDevelopmentWithoutDevLicense` �
 | ASM-04 | 檔案身分可由 handle 取得並比較：Linux 與 macOS 用 `st_dev` 加 `st_ino`，Windows 用 volume 序號加 128 位元的 file ID | POSIX `<sys/stat.h>`：`st_ino` 與 `st_dev` 合起來在系統內唯一識別一個檔案。`FILE_ID_INFO` 文件：file ID 在同一 volume 內識別檔案 | 檔案刪除後編號可能被重複使用，所以只在同一批次內、對仍存在或剛確認過的檔案比較。網路檔案系統不在驗證範圍 | 通過。P1、P3 都用身分比較偵測替換，所有成功的替換都被偵測到 |
 | ASM-05 | Linux 與 macOS 上，從 home 以 `openat(O_NOFOLLOW \| O_DIRECTORY)` 逐層開啟目錄，遇到符號連結就失敗；之後以目錄 fd 為基準的 `openat`、`renameat`、`unlinkat`、`linkat` 和 `fstatat(AT_SYMLINK_NOFOLLOW)`，都作用在該 fd 對應的目錄 | POSIX `open`：`O_NOFOLLOW` 遇到符號連結以 `ELOOP` 失敗；`O_DIRECTORY` 遇到非目錄以 `ENOTDIR` 失敗；相對路徑以 fd 對應的目錄為基準 | home 本身的路徑不在此範圍，由 §6 的正規化規則處理 | 通過。預檢後替換父目錄或上層目錄的 24 個案例，在 Linux、macOS 都被拒絕；P3 讀取連結時以 `ELOOP` 失敗，不會讀到所指檔案 |
 | ASM-06 | Linux 與 macOS 上，持有目錄 fd 不能阻止其他程序改名或搬移該目錄。設計因此在操作後重新走訪路徑；若路徑已不通往持有的目錄，就經同一個 fd 復原 | POSIX `rename`：目錄正被其他程序使用時，是否以 `EBUSY` 失敗由實作決定；Linux 與 macOS 不會因目錄已被開啟而拒絕改名 | DC-002 在 Unix 的保證範圍：寫入不會落在替代的目錄或連結指向的位置。但若外部程序把原目錄整個搬到 home 外，本批寫入會短暫出現在搬出去的目錄中，重檢後隨即復原 | 有條件。最後一次檢查後替換的 24 個案例，Linux、macOS 的建立、更新、刪除都已復原，快照都判定失效；其中搬出 home 的 6 個寫入案例，寫入曾短暫出現在 home 外。另一個程序持續替換父目錄時跑 300 輪，沒有違反任何檢查條件 |
-| ASM-07 | Linux 與 macOS 沒有以 handle 刪除或改名檔案的操作，核對檔案身分到 `unlinkat`、`renameat` 之間仍有空窗 | POSIX `unlinkat`、`renameat` 只接受名稱 | 這個空窗內的替換無法事先阻止。§6.3 的取代以交換式改名（ASM-17）、刪除以先移開再核對，把被換入的檔案移到另一個名稱後再核對，不會刪除它；只有檔案系統不支援交換時，取代仍有這個空窗。§8.2 的 `BeforeOperation` 同步點就在這個空窗，由 06 驗證 | 有條件。pilot 的同步點不在這個空窗內；持續替換的 300 輪沒有違反檢查條件 |
+| ASM-07 | Linux 與 macOS 沒有以 handle 刪除或改名檔案的操作，核對檔案身分到 `unlinkat`、`renameat` 之間仍有空窗 | POSIX `unlinkat`、`renameat` 只接受名稱 | 這個空窗內的替換無法事先阻止。§6.3 的取代以交換式改名（ASM-17）、刪除以先移開再核對，把被換入的檔案移到另一個名稱後再核對，不會刪除它；只有檔案系統不支援交換時，取代仍有這個空窗。§8.2 的 `BeforeOperation` 同步點就在這個空窗；不支援交換時退回 `renameat` 的情形由 06 驗證 | 有條件。P1 的同步點不在這個空窗內；持續替換的 300 輪沒有違反檢查條件。P6 在這個空窗換入一般檔案、連結或目錄，或就地修改，交換式改名的取代與先移開的刪除都發現並放回原位（ASM-17） |
 | ASM-08 | Windows 上，以具資料存取權（`FILE_LIST_DIRECTORY`）、不含 `FILE_SHARE_DELETE` 的 handle 持有目錄時，其他程序無法改名或刪除該目錄。在這些目錄內的寫入可以用路徑操作 | `CreateFileW` 文件：沒有 `FILE_SHARE_DELETE` 時，其他程序以 delete 存取權開啟會失敗，而 delete 存取權同時涵蓋刪除與改名 | 文件沒有說明哪些存取權會參與共用檢查。pilot 發現只有 `FILE_READ_ATTRIBUTES` 和 `SYNCHRONIZE` 的 handle 擋不住改名，所以須加上 `FILE_LIST_DIRECTORY` | 有條件。兩個 Windows job 中，最後一次檢查後的 48 次替換都被擋下（sharing violation），操作照計畫完成。持續替換時，外部程序的嘗試被擋下 225–242 次 |
 | ASM-09 | Windows 上，以 `FILE_FLAG_OPEN_REPARSE_POINT` 開啟會取得 reparse point 本身，不跟隨；開啟目錄後以 `GetFinalPathNameByHandleW` 核對最終路徑 | `CreateFileW` 文件：指定此旗標時不做一般的 reparse point 處理，直接開啟 reparse point | 符號連結、junction 以及其他 reparse point 一律視為連結。路徑中的目錄是 reparse point 時拒絕操作；目標是 reparse point 時，只有 `IO_REPARSE_TAG_SYMLINK` 可以接管（§6） | 通過。預檢後換成 junction 的案例都被拒絕；P3 讀取連結時開到的是連結本身，判定類型不符，不會讀到所指檔案 |
 | ASM-10 | Windows 上，以 handle 設定 `FileDispositionInfo` 刪除檔案，刪除的就是核對過身分的那個檔案 | `FILE_DISPOSITION_INFO` 文件：handle 關閉時刪除該檔案 | 須以 `DELETE` 存取權開啟 | 通過。P1 的刪除案例照計畫完成 |
@@ -947,16 +947,16 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 
 ### 7.7 §6 新增的假設
 
-§6 的演算法另外依賴下列行為。它們都有官方文件依據，但 pilot 還沒有涵蓋，所以都是「未驗證」。假設不成立時的後果寫在「保證範圍與條件」欄；驗證方式見 §13。
+§6 的演算法另外依賴下列行為，由 pilot P6 驗證（CI run 42785134928，§7.1）。假設涉及其他程序的（ASM-18、ASM-20），由另一個 pilot 程序執行外部操作；其餘在 `BeforeOperation` 同步點由測試程序自己改動目標。假設不成立時的後果寫在「保證範圍與條件」欄。
 
 | 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
 | --- | --- | --- | --- | --- |
-| ASM-16 | 有不覆蓋既有項目的建立與改名：Linux 與 macOS 的 `linkat` 在新名稱已存在時以 `EEXIST` 失敗；目錄的改名用 `renameat2(RENAME_NOREPLACE)`（Linux）與 `renameatx_np(RENAME_EXCL)`（macOS）；Windows 的 `MoveFileExW` 不指定 `MOVEFILE_REPLACE_EXISTING` 時，目的地已存在就失敗 | POSIX `link`：path2 已存在時以 `EEXIST` 失敗，連結也算存在。Linux `rename(2)`：`RENAME_NOREPLACE` 在 newpath 已存在時失敗，須檔案系統支援。macOS `rename(2)`：`RENAME_EXCL` 須檔案系統支援（`VOL_CAP_INT_RENAME_EXCL`）。`MoveFileExW` 文件：未指定該旗標時不取代既有檔案 | `linkat` 需要檔案系統支援 hard link；不支援時（例如 FAT 系列）建立會失敗，依執行失敗整批回復，不會覆寫。目錄的不覆蓋改名只用於初始化，不支援時初始化回報失敗 | 未驗證 |
-| ASM-17 | Linux 的 `renameat2(RENAME_EXCHANGE)` 與 macOS 的 `renameatx_np(RENAME_SWAP)` 以一次操作交換兩個名稱，任何時間點兩個名稱都指向完整的檔案 | Linux `rename(2)`：`RENAME_EXCHANGE` 以原子方式交換 oldpath 與 newpath，兩者都須存在，Linux 3.15 起提供，須檔案系統支援。macOS `rename(2)`：`RENAME_SWAP` 交換來源與目的地，須檔案系統支援（`VOL_CAP_INT_RENAME_SWAP`） | 不支援時回傳 `EINVAL` 或 `ENOTSUP`，§6.3 改用 `renameat`，最後一次核對與取代之間留有空窗（ASM-07）。程序在交換後被終止時，目標是完整的新檔，舊檔留在暫存檔的名稱下，由 §6.5 清理 | 未驗證 |
-| ASM-18 | Windows 上，以 `FILE_READ_DATA` 開啟、共用模式只有 `FILE_SHARE_READ` 的檔案 handle 存在期間，其他程序無法改名、刪除或寫入該檔案 | `CreateFileW` 文件：沒有 `FILE_SHARE_DELETE` 時，其他程序以 delete 存取權開啟會失敗；沒有 `FILE_SHARE_WRITE` 時，以寫入存取權開啟會失敗 | ASM-08 的檔案版本。ASM-08 發現只有屬性存取權的 handle 不參與共用檢查，所以須帶 `FILE_READ_DATA`。關閉 handle 到 `MoveFileExW` 之間的空窗不受保護（§6.3） | 未驗證 |
-| ASM-19 | Windows 上，`CreateDirectoryW` 可在建立時指定 DACL，之後在目錄中建立的檔案繼承它；`GetSecurityInfo`、`SetSecurityInfo` 可經由 handle 讀取並設定檔案的 DACL，包含是否繼承上層 | `CreateDirectoryW` 文件：`lpSecurityAttributes` 指定新目錄的安全描述元。`SetSecurityInfo` 文件：`PROTECTED_DACL_SECURITY_INFORMATION` 使 DACL 不繼承上層 | 讀取原檔的 DACL 須有 `READ_CONTROL`，設定暫存檔的 DACL 須有 `WRITE_DAC`，檔案擁有者兩者都有。不成立時，取代後的輸出改用目錄繼承的 ACL（同 ASM-02），程式目錄則沿用上層的 ACL | 未驗證 |
-| ASM-20 | Linux 與 macOS 的 `flock(LOCK_EX \| LOCK_NB)`，在其他程序持有鎖定時以 `EWOULDBLOCK` 失敗；Windows 以共用模式 `0` 開啟的檔案，其他程序再開啟時以 `ERROR_SHARING_VIOLATION` 失敗。兩者都在程序結束時釋放 | Linux `flock(2)`：鎖定屬於 open file description，所有相關的 fd 關閉時釋放。macOS `flock(2)`：`LOCK_NB` 時以 `EWOULDBLOCK` 失敗。`CreateFileW` 文件：共用模式為 `0` 時，其他程序無法開啟該檔案 | `flock` 不屬於 POSIX，但 Linux 與 macOS 都提供。網路檔案系統不在範圍內。不成立時，兩個 rosamta 程序可能同時套用，這超出 AS-5 的範圍，§6.3 的核對仍然有效 | 未驗證 |
-| ASM-21 | Linux 與 macOS 上，以 `O_NONBLOCK` 開啟 FIFO 或裝置檔不會阻塞 | POSIX `open`：以 `O_RDONLY \| O_NONBLOCK` 開啟 FIFO 立即返回；支援非阻塞開啟的裝置檔也立即返回 | 只在判定類型與開檔之間被換成特殊檔案時才會遇到；開啟後以 handle 判定類型，不是一般檔案就不讀取（§6.3）。pilot P1 已這樣開檔，但沒有測試 FIFO | 未驗證 |
+| ASM-16 | 有不覆蓋既有項目的建立與改名：Linux 與 macOS 的 `linkat` 在新名稱已存在時以 `EEXIST` 失敗；不覆蓋的改名用 `renameat2(RENAME_NOREPLACE)`（Linux）與 `renameatx_np(RENAME_EXCL)`（macOS），目錄與檔案都適用；Windows 的 `MoveFileExW` 不指定 `MOVEFILE_REPLACE_EXISTING` 時，目的地已存在就失敗 | POSIX `link`：path2 已存在時以 `EEXIST` 失敗，連結也算存在。Linux `rename(2)`：`RENAME_NOREPLACE` 在 newpath 已存在時失敗，須檔案系統支援。macOS `rename(2)`：`RENAME_EXCL` 須檔案系統支援（`VOL_CAP_INT_RENAME_EXCL`）。`MoveFileExW` 文件：未指定該旗標時不取代既有檔案 | `linkat` 需要檔案系統支援 hard link；不支援時（例如 FAT 系列）建立會失敗，依執行失敗整批回復，不會覆寫。不覆蓋的改名用於初始化與 §6.3 刪除時的移回。不支援時初始化回報失敗；移回失敗時，被移開的項目留在暫存名稱下，回報它的位置，不刪除（§6.5）。pilot 沒有測試不支援的檔案系統 | 通過。三平台上，名稱已被一般檔案、目錄或連結占用時（Windows 測一般檔案與目錄），建立都失敗（Linux 與 macOS 為 `EEXIST`，Windows 為 `ERROR_ALREADY_EXISTS`），占用的項目與暫存檔都不變。目錄改名到空目錄、非空目錄或一般檔案也都失敗。對照組：Linux 與 macOS 的一般 `renameat` 會取代空目錄 |
+| ASM-17 | Linux 的 `renameat2(RENAME_EXCHANGE)` 與 macOS 的 `renameatx_np(RENAME_SWAP)` 以一次操作交換兩個名稱，任何時間點兩個名稱都指向完整的檔案 | Linux `rename(2)`：`RENAME_EXCHANGE` 以原子方式交換 oldpath 與 newpath，兩者都須存在，Linux 3.15 起提供，須檔案系統支援。macOS `rename(2)`：`RENAME_SWAP` 交換來源與目的地，須檔案系統支援（`VOL_CAP_INT_RENAME_SWAP`） | 不支援時回傳 `EINVAL` 或 `ENOTSUP`，§6.3 改用 `renameat`，最後一次核對與取代之間留有空窗（ASM-07）。程序在交換後被終止時，目標是完整的新檔，舊檔留在暫存檔的名稱下，由 §6.5 清理。pilot 沒有測試不支援交換的檔案系統，退回 `renameat` 的路徑由 06 驗證 | 通過。Linux 與 macOS 交換後，兩個名稱的身分互換；目標是連結時，搬動的是連結本身，所指檔案不變；另一個名稱不存在時以 `ENOENT` 失敗。另一個程序反覆交換時讀取 10,000 次、終止 50 次，沒有一次找不到檔案或讀到不完整的內容。依 §6.3 實作的取代與刪除，在 `BeforeOperation` 把目標換成一般檔案、連結或目錄，或就地修改，都判定不符並放回原位，沒有留下暫存檔 |
+| ASM-18 | Windows 上，以 `FILE_READ_DATA` 開啟、共用模式只有 `FILE_SHARE_READ` 的檔案 handle 存在期間，其他程序無法改名、刪除或寫入該檔案 | `CreateFileW` 文件：沒有 `FILE_SHARE_DELETE` 時，其他程序以 delete 存取權開啟會失敗；沒有 `FILE_SHARE_WRITE` 時，以寫入存取權開啟會失敗 | ASM-08 的檔案版本。ASM-08 發現只有屬性存取權的 handle 不參與共用檢查，所以須帶 `FILE_READ_DATA`。關閉 handle 到 `MoveFileExW` 之間的空窗不受保護（§6.3）。其他程序以 `MoveFileExW` 取代目標時，失敗的錯誤是 `ERROR_ACCESS_DENIED`，不是 sharing violation | 有條件。兩個 Windows job 中，取代與刪除持有目標期間，另一個程序的改名、刪除與寫入都以 `ERROR_SHARING_VIOLATION` 失敗，取代目標以 `ERROR_ACCESS_DENIED` 失敗，讀取成功；之後操作照計畫完成。對照組：只有屬性存取權的 handle 擋不住改名、刪除與寫入 |
+| ASM-19 | Windows 上，`CreateDirectoryW` 可在建立時指定 DACL，之後在目錄中建立的檔案繼承它；`GetSecurityInfo`、`SetSecurityInfo` 可經由 handle 讀取並設定檔案的 DACL，包含是否繼承上層 | `CreateDirectoryW` 文件：`lpSecurityAttributes` 指定新目錄的安全描述元。`SetSecurityInfo` 文件：`PROTECTED_DACL_SECURITY_INFORMATION` 使 DACL 不繼承上層 | 讀取原檔的 DACL 須有 `READ_CONTROL`，設定暫存檔的 DACL 須有 `WRITE_DAC`，檔案擁有者兩者都有。不成立時，取代後的輸出改用目錄繼承的 ACL（同 ASM-02），程式目錄則沿用上層的 ACL | 通過。兩個 Windows job 中，以 `D:P` 加三個 `OICI` 項目建立的目錄，DACL 與指定的相同；其中新建的檔案只有這三個繼承來的項目。原檔的 DACL 不繼承上層，或含明確項目時，複製到暫存檔再以 `MoveFileExW` 取代，取代後的 SDDL 與原本完全相同。對照組：不複製時，明確項目與不繼承的設定都不見了，只剩目錄繼承的項目，與 ASM-02 相符 |
+| ASM-20 | Linux 與 macOS 的 `flock(LOCK_EX \| LOCK_NB)`，在其他程序持有鎖定時以 `EWOULDBLOCK` 失敗；Windows 以共用模式 `0` 開啟的檔案，其他程序再開啟時以 `ERROR_SHARING_VIOLATION` 失敗。兩者都在程序結束時釋放 | Linux `flock(2)`：鎖定屬於 open file description，所有相關的 fd 關閉時釋放。macOS `flock(2)`：`LOCK_NB` 時以 `EWOULDBLOCK` 失敗。`CreateFileW` 文件：共用模式為 `0` 時，其他程序無法開啟該檔案 | `flock` 不屬於 POSIX，但 Linux 與 macOS 都提供。網路檔案系統不在範圍內。不成立時，兩個 rosamta 程序可能同時套用，這超出 AS-5 的範圍，§6.3 的核對仍然有效 | 通過。三平台上，持有鎖定時另一個程序都失敗（Linux 與 macOS 為 `EWOULDBLOCK`，Windows 為 `ERROR_SHARING_VIOLATION`）。Linux 與 macOS 在同一個程序內開啟再關閉同一個檔案的另一個 fd，鎖定仍在。持有者被終止後，第一次嘗試就取得鎖定；鎖定檔沒有被刪除 |
+| ASM-21 | Linux 與 macOS 上，以 `O_NONBLOCK` 開啟 FIFO 或裝置檔不會阻塞 | POSIX `open`：以 `O_RDONLY \| O_NONBLOCK` 開啟 FIFO 立即返回；支援非阻塞開啟的裝置檔也立即返回 | 只在判定類型與開檔之間被換成特殊檔案時才會遇到；開啟後以 handle 判定類型，不是一般檔案就不讀取（§6.3）。pilot 沒有測試裝置檔 | 通過。Linux 與 macOS 以 `O_NOFOLLOW \| O_NONBLOCK` 開啟 FIFO 都立即返回，以 handle 判定為其他類型。對照組：不加 `O_NONBLOCK` 時開啟會阻塞 |
 
 ### 7.8 文件出處
 
