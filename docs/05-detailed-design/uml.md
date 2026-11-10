@@ -15,9 +15,11 @@ flowchart TB
     rustix(["rustix"])
     winsys(["windows-sys"])
     libs(["toml_edit、minijinja、serde、serde_json、sha2"])
+    binlibs(["clap、similar、serde、serde_json"])
 
     bin --> platform
     bin --> core
+    bin --> binlibs
     platform -- "實作 FileSystem、GitClient" --> core
     platform -- "cfg(unix)" --> rustix
     platform -- "cfg(windows)" --> winsys

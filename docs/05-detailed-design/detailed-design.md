@@ -161,7 +161,7 @@ USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱
 
 | crate | 種類 | 內容 | 依賴的 workspace crate | 外部 crate |
 | --- | --- | --- | --- | --- |
-| `rosamta` | 執行檔 | 命令列介面（§9）。啟動時收集主機資訊，建立 platform 的實作，交給 core 的服務 | core、platform | 參數解析與 diff 的套件在 §9 選定；serde_json |
+| `rosamta` | 執行檔 | 命令列介面（§9）。啟動時收集主機資訊，建立 platform 的實作，交給 core 的服務 | core、platform | clap、similar、serde、serde_json（§9.10） |
 | `rosamta-core` | 函式庫 | 03 的全部服務與資料型別，以及 `FileSystem`、`GitClient` 兩個 trait | 無 | toml_edit、minijinja、serde、serde_json、sha2 |
 | `rosamta-platform` | 函式庫 | `FileSystem` 的 Unix 與 Windows 實作、`GitClient` 的實作（呼叫 `git` 執行檔），以及主機資訊的收集 | core | rustix（Unix）、windows-sys（Windows） |
 | `rosamta-testkit` | 函式庫，只作 dev-dependency | 可注入故障的 `FileSystem`、在同步點執行注入的 `SyncHook`、建立測試用 home 的工具（§8） | core、platform | — |
@@ -222,7 +222,7 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | `rosamta-platform` | `windows` | `FileSystem` 的 Windows 實作，以 windows-sys 呼叫 `CreateFileW`、`SetFileInformationByHandle`、`MoveFileExW` 等操作（§7.3） |
 | `rosamta-platform` | `host` | 收集 `HostContext`：作業系統、主機名稱（IF-011）、home 與環境變數 |
 | `rosamta-platform` | `git` | `GitClient` 的實作，以 `std::process` 執行系統上的 `git`（§2.1） |
-| `rosamta` | `cli` 等 | 子指令、參數與輸出格式（§9） |
+| `rosamta` | `main`、`cli`、`args`、`run`、`output`、`term` | 子指令、參數與輸出格式（§9.10） |
 
 `unix` 與 `windows` 以 `#[cfg]` 選擇，對外只提供同一個 `FileSystem` 實作的建構函式。
 
@@ -246,7 +246,7 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | C4 管理方法的參數 | 加上 `&WriteLock`；`add` 改收 `AddRequest` | 以型別確保修改前已取得鎖定（§6.7）；納入時可以指定輸出名稱 |
 | C4 回傳 `Diagnostics` | 以 `&mut Diagnostics` 收集（§4.1） | 錯誤與警告走同一條路，USE-004 才能一次列出全部 |
 | C3 `PlanItem` 的字串成員 | enum，加上觀測、期望內容與紀錄的變更（§4.12） | 執行時依觀測核對，以期望內容寫入；03 C3 末段要求補齊這個傳遞契約 |
-| C3 `ApplyReport.exitCode` | `outcome()`，exit code 由 §9 對應 | core 不決定 exit code，與 §4.1 一致 |
+| C3 `ApplyReport.exitCode` | `outcome()`，exit code 由 §9.7 對應 | core 不決定 exit code，與 §4.1 一致 |
 | C4 `Planner.build(config, values, state)` | `targets` 與 `plan` | 目標碰撞須在渲染前檢查（§4.6） |
 | C4 `FileSystem` 的 `inspect`、`backup`、`applyAtomically` | `inspect` 與三次呼叫的綁定操作 `prepare`、`execute`、`confirm` | 同步點須落在核對與系統呼叫之間（§8.2）；備份與快照也是綁定的操作 |
 | C4 `RecoveryManager` 的 `begin()`、`capture(path)`、`commit()` | `begin` 接收狀態的基準，`capture` 接收觀測，`commit` 改名為 `finish`；加上 `record`、`temp_name`、`clean_stale` | 快照要依觀測核對（A16）；回復要知道本批做過的每個操作 |
@@ -301,8 +301,8 @@ pub type Checked<T> = Result<T, Reported>;
 
 - 每個可能遇到使用者輸入問題的函式都接收 `&mut Diagnostics`。回傳 `Checked<T>` 的函式失敗時，至少已記錄一個錯誤；呼叫端用 `?` 往上傳，不必再回報一次。能在錯誤之後繼續檢查的函式，例如 `ConfigLoader::load`，直接回傳結果，錯誤留在 `Diagnostics` 中。
 - `DiagCode` 是 enum，每個值有固定的字串，例如 `config.unknown-key`，供 IF-004 的結構化輸出使用，同一個 major 版本內不改名（MNT-003）。各類別可能產生的代碼列在該類別的「錯誤」中。
-- `message` 的語言與輸出格式由 §9 決定。core 不組合絕對路徑：`Origin` 保存 home 內的相對位置，由執行檔依 `HostContext` 轉成使用者看到的路徑。
-- 除了套用，子指令的 exit code 只看 `has_errors()`：有錯誤為 `1`，否則為 `0`（IF-007）。套用的 exit code 見 §9。
+- `message` 的語言與輸出格式由 §9.5 決定。core 不組合絕對路徑：`Origin` 保存 home 內的相對位置，由執行檔依 `HostContext` 轉成使用者看到的路徑。
+- 除了套用，子指令的 exit code 只看 `has_errors()`：有錯誤為 `1`，否則為 `0`（IF-007）。套用與初始化的 exit code 見 §9.7。
 
 **名稱**：以 newtype 表示，建構時檢查 §5.3 的格式，之後不必再檢查。
 
@@ -539,6 +539,9 @@ impl BuiltinTemplate {
     pub fn name(self) -> &'static str;
     pub fn text(self) -> &'static str;
 }
+
+/// 內建模組的宣告（§5.6）。預檢與 `schema builtin`（§9.9）使用同一份。
+pub fn modules() -> &'static ModuleSet;
 ```
 
 內建資源有錯誤是程式的錯誤，不是使用者的錯誤。單元測試逐一確認內建資源載入時沒有任何診斷，所以執行時遇到這類錯誤會 panic。
@@ -591,7 +594,23 @@ impl<'a> ConfigLoader<'a> {
 
 /// 解析 manifest 的文字，不經過檔案系統。ManifestService 用它確認修改後的內容。
 pub fn parse_manifest(text: &str, origin: &Origin, diags: &mut Diagnostics) -> Checked<Manifest>;
+
+/// 四種設定檔可用的鍵（§5.4、§5.5、§5.7、§5.8）。
+pub mod schema {
+    pub enum FileKind { Manifest, Module, Profile, Local }
+    pub struct KeyDoc {
+        pub key: &'static str,              // 例如 outputs.<名稱>.target、rules[].tags
+        pub toml_type: &'static str,
+        pub required: bool,
+        pub default: Option<&'static str>,
+        pub description: &'static str,
+    }
+    pub fn keys(kind: FileKind) -> &'static [KeyDoc];
+    pub fn example(kind: FileKind) -> &'static str;  // 範例檔
+}
 ```
+
+`ConfigLoader` 以 `schema::keys` 判定不認得的鍵，並列出該位置可用的鍵（FR-MAN-029）；`schema` 子指令以同一份資料產生說明（IF-005、§9.9）。說明與實際接受的鍵因此出自同一個來源。
 
 呼叫順序：`Layout::config_dir` → `load_local` → `Layout::new` → `load`。`layout` 在第 0 層，不能使用 `FileSystem`，所以 `Layout::new` 只做文字的處理；三個目錄是否互相包含要依 §6.2 的位置鍵判定，由初始化負責（§5.2、§4.16）。
 
@@ -1607,7 +1626,7 @@ pub struct ApplyReport {
 }
 impl ApplyReport { pub fn outcome(&self) -> ApplyOutcome; }
 
-pub enum ApplyOutcome { Completed, Partial, Failed } // B-5；exit code 的對應見 §9
+pub enum ApplyOutcome { Completed, Partial, Failed } // B-5；exit code 的對應見 §9.7
 
 pub struct ItemResult {
     pub output: OutputName,
@@ -1636,7 +1655,7 @@ pub enum ExecErrorKind {
 }
 ```
 
-C3 的 `ApplyReport.exitCode` 改為 `outcome()`：core 不決定 exit code，§9 把 `Completed`、`Partial`、`Failed` 對應到 `0`、`2`、`1`。C3 的 `errors` 與 `rollbackFailures` 分別是 `failure` 與 `recovery`；批次在第一個錯誤就停止（§6.6），所以原始錯誤只有一個。
+C3 的 `ApplyReport.exitCode` 改為 `outcome()`：core 不決定 exit code，§9.7 把 `Completed`、`Partial`、`Failed` 對應到 `0`、`2`、`1`。C3 的 `errors` 與 `rollbackFailures` 分別是 `failure` 與 `recovery`；批次在第一個錯誤就停止（§6.6），所以原始錯誤只有一個。
 
 **每個項目的操作**（§6.6 步驟 2）：
 
@@ -1749,7 +1768,7 @@ pub struct InitializationRequest {
     pub repo: Option<String>,                 // 遠端 repo 的位址（IF-012）
     pub source: Option<PathBuf>,              // 絕對路徑（FR-INI-005）；相對路徑由執行檔轉換
     pub tags: Vec<Tag>,                       // FR-INI-006
-    pub values: Vec<(FieldRef, RawValue)>,    // FR-INI-006；文字轉成 RawValue 的規則見 §9
+    pub values: Vec<(FieldRef, RawValue)>,    // FR-INI-006；文字轉成 RawValue 的規則見 §9.2
     pub apply: Option<ApplyRequest>,          // None 表示只初始化（FR-INI-003）
 }
 
@@ -1763,7 +1782,7 @@ pub struct InitializationResult {
 
 C4 的 `GitClient.cloneToStaging(url)` 改成 `clone_into(url, dest)`：暫存目錄由 `InitializationService` 經由 `FileSystem` 建立，才能依 §6.3 記下身分並在 clone 前後核對；`GitClient` 只執行 git。
 
-platform 的實作以 `std::process` 執行 `git clone -- <url> <dest>`：`--` 避免以 `-` 開頭的位址被當成選項；標準輸入接到空裝置，設定 `GIT_TERMINAL_PROMPT=0`，git 需要帳號密碼時直接失敗，不等待輸入（FR-INI-006）。SSH 使用使用者既有的金鑰與設定（AS-4）。
+platform 的實作以 `std::process` 執行 `git clone -- <url> <dest>`：`--` 避免以 `-` 開頭的位址被當成選項；標準輸入接到空裝置，設定 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never` 與 `SSH_ASKPASS_REQUIRE=never`，git 需要帳號密碼時直接失敗，不等待輸入，也不開啟登入視窗（FR-INI-006、§9.8）。SSH 使用使用者既有的金鑰與設定（AS-4）。
 
 **流程**：
 
@@ -2678,3 +2697,312 @@ core 的單元測試不能使用 testkit。testkit 依賴 core；core 的單元�
 不依同步點的情境：A5 停止管理的兩次寫入之間以 `FaultFs` 注入失敗，程序中止則以執行檔的測試終止；A5 最後一個情境在 `AfterPreflight` 執行停止管理，依 §6.7 會因取不到鎖定而失敗。A7、A12 用 `BeforeOperation`（來源目錄的移入、來源副本的建立、manifest 與本機設定的修改）；A7 的「下載途中才被占用」由假的 `GitClient` 在 clone 期間建立檔案。A24 在 `AfterPreflight` 與第一個項目的 `AfterOperation` 替換來源，預期是寫入的內容仍是預檢時的版本，執行期間沒有開啟來源檔。執行期參照是規劃時放進記憶體的 `DesiredContent`（§4.12），執行時不需要再取得，所以「無法取得已確認的內容」只剩寫入途中損毀一種情況，以 `FaultFs` 注入（§8.3），預期 `Executor` 發現寫入的版本不符，依執行失敗整批回復，不提交狀態。A6、A13 的程序中止與 A8 見 §8.3。
 
 A16 第三列的預期依 §6.5 的快照方式而定：快照是邊讀邊計算的複製，核對的是讀到的位元組，所以「改回」不會讓錯誤的副本通過。若改用 hard link 當快照，副本就是原檔本身，改回之後副本是正確的版本，這一列的預期就不成立；這是 §6.5 不用 hard link 當快照的另一個理由。
+
+## 9. CLI 與錯誤處理
+
+本節定義執行檔 `rosamta` 的子指令、參數、輸出與 exit code（SRS §3.1.1、B-5）。執行檔只做三件事：把參數轉成 core 的請求，依 §6.7 決定是否取得鎖定，再把結果與診斷轉成文字或 JSON。判定的規則都在 core，執行檔不重做。
+
+### 9.1 子指令
+
+IF-001 的每項操作是 `rosamta` 的一個子指令。預覽、摘要與套用沿用 git 與 chezmoi 的 `diff`、`status`、`apply`（SRS §3.1.1）。
+
+| 子指令 | SRS 的操作 | 鎖定（§6.7） | 呼叫 |
+| --- | --- | --- | --- |
+| `init [<repo>]` | 初始化 | 取得 | `InitializationService::initialize` |
+| `diff` | 預覽 | 不取得 | `ApplyService::preview`，`diff` 為 `true` |
+| `status` | 摘要 | 不取得 | `ApplyService::preview`，`diff` 為 `false` |
+| `apply` | 套用 | 取得 | `ApplyService::apply` |
+| `query refs <模組>`、`query refs <模組>.<欄位>` | 查詢（FR-QRY-001、FR-QRY-002） | 不取得 | `QueryService::find_outputs` |
+| `query output <名稱或路徑>` | 查詢（FR-QRY-003） | 不取得 | `QueryService::describe_output` |
+| `query value <模組>.<欄位>` | 查詢（FR-PRF-013） | 不取得 | `QueryService::describe_value` |
+| `add <檔案>` | 納入 | 取得 | `ManifestService::add` |
+| `modify <輸出>` | 修改屬性 | 取得 | `ManifestService::update` |
+| `forget <輸出>` | 停止管理 | 取得 | `ManifestService::forget` |
+| `list` | 列出輸出 | 不取得 | `QueryService::list_outputs` |
+| `schema <種類>` | 格式說明（IF-005、IF-006） | 不取得，不讀取任何檔案 | `config::schema`、`config::builtin`（§9.9） |
+| `help [<子指令>]` | 說明（IF-002） | 不取得，不讀取任何檔案 | — |
+
+- 查詢的三種問題放在同一個子指令 `query` 之下，因為 IF-001 把查詢列為一項操作。
+- 編輯來源（FR-MAN-027）延後（§1.2），沒有對應的子指令；`query output` 會列出範本或來源檔的路徑，使用者可以自行開啟。
+- 另有 `--help` 與 `--version`，任何子指令都可以加上 `--help`。
+
+### 9.2 參數與選項
+
+**共通**：`--format <text 或 json>`，預設為 `text`，寫在子指令的前後都可以。每個子指令都接受，`json` 的格式見 §9.6。IF-004 只要求預覽、套用、摘要、查詢與列出輸出；其他子指令也提供，AI 助理才能以同一種方式讀取所有結果與診斷。
+
+**處理方式**：`diff`、`status`、`apply` 與指定了 `<repo>` 的 `init` 接受下列選項，轉成 `Choices`（§4.12）。預覽也接受，因為 FR-DRF-003 要求預覽依本次指定的模式與處理方式，說明套用時的處理。
+
+| 選項 | `Choices` | 需求 |
+| --- | --- | --- |
+| `--strict` | `strict` 為 `true` | FR-DRF-009 |
+| `--overwrite <路徑>`（可重複）、`--overwrite-all` | `drift` 加入 `(Path, Overwrite)` 或 `(All, Overwrite)` | FR-DRF-005 |
+| `--accept <路徑>`（可重複）、`--accept-all` | `drift` 加入 `(Path, Accept)` 或 `(All, Accept)` | FR-DRF-006 |
+| `--delete-modified <路徑>`（可重複）、`--delete-modified-all` | `delete_modified` 加入 `Path` 或 `All` | FR-DRF-014 |
+
+- `--overwrite-all` 與 `--accept-all` 同時出現是參數錯誤。同一個路徑同時被指定覆寫與接受，由 `Planner` 回報 `apply.choice-conflict`（§4.12）。`-all` 與指定路徑的不同處理同時出現時，指定路徑的優先，例如 `--accept-all --overwrite ~/.gitconfig` 只覆寫 `~/.gitconfig`，其他 drift 衝突都接受。
+- `--strict` 可以和其他處理方式一起使用。有 drift 衝突時嚴格模式優先，不套用指定的處理（03 §12 第 1 項）。
+- 互動模式延後（§1.2），所以沒有啟用互動的選項；USE-002 的處理見 §12。
+
+**初始化**：
+
+| 參數 | `InitializationRequest` | 需求 |
+| --- | --- | --- |
+| `<repo>` | `repo`：HTTPS 或 SSH 位址，原樣交給 git | IF-012 |
+| `--source <目錄>` | `source` | FR-INI-005 |
+| `--tag <標籤>`（可重複） | `tags` | FR-INI-006 |
+| `--set <模組>.<欄位>=<值>`（可重複） | `values` | FR-INI-006 |
+| `--no-apply` | `apply` 為 `None` | FR-INI-003 |
+| 處理方式的選項 | `apply` 的 `choices` | FR-INI-011 |
+
+沒有 `<repo>` 時不套用（§4.16），這時使用 `--no-apply` 或處理方式的選項是參數錯誤，使用者才不會誤以為選項有作用。
+
+`--set` 的值依下列規則轉成 `RawValue`：
+
+1. 第一個 `=` 之前是欄位，依 `FieldRef` 的格式檢查（§4.1）。
+2. 之後的文字能完整解析成一個 TOML 值時，使用這個值，例如 `14`、`true`、`["~/bin"]`、`"#ff0000"`。解析結果是日期時間時，改用原文的字串。
+3. 無法解析時，整段文字是字串，例如 `#ff0000`、`block`、`JetBrains Mono`。
+
+要寫入字串 `14` 或 `true` 時，加上 TOML 的引號，例如 `--set 'prompt.style="true"'`。初始化不檢查欄位的型別（§4.16），無法依宣告轉換；這個規則讓常見的數字、色碼與名稱都不需要引號。
+
+**管理**：
+
+| 子指令 | 參數 | 轉成 |
+| --- | --- | --- |
+| `add` | `<檔案>`、`--name <名稱>` | `AddRequest` |
+| `modify` | `--template <路徑>`、`--copy <路徑>`（兩者互斥） | `source` 為 `Set` |
+| `modify` | `--target <路徑>`、`--target <平台>=<路徑>`（可重複；平台為 `linux`、`macos`、`windows`） | `target` 的 `(None, Set)` 或 `(Some(平台), Set)` |
+| `modify` | `--ownership <full 或 create-only>`、`--permissions <權限>`（§5.4 的寫法）、`--takeover <true 或 false>` | 各屬性為 `Set` |
+| `modify` | `--reset <屬性>`（可重複）：`source`、`target`、`target.linux`、`target.macos`、`target.windows`、`ownership`、`permissions`、`takeover` | 該屬性為 `Reset` |
+| `forget` | `<輸出>` | — |
+
+`modify` 沒有指定任何屬性，或同一個屬性同時被設定與 `--reset`，是參數錯誤。
+
+**查詢**：`query refs` 的參數有 `.` 時是欄位，否則是模組（`RefQuery`）。`query output` 的參數符合輸出名稱的格式（§4.1）時是名稱，否則是路徑（`OutputKey`）；要以路徑查詢一個和輸出同名的檔案，寫成 `./<檔名>`。
+
+**路徑參數**有兩種，轉換方式不同：
+
+| 種類 | 參數 | 轉換 |
+| --- | --- | --- |
+| 檔案系統上的路徑 | `add` 的檔案、`query output` 的路徑、處理方式的路徑、`init --source` | 開頭是 `~` 或 `~/` 時換成 home，因為引號中的 `~` 不會被 shell 展開，Windows 的 shell 也不展開；相對路徑依目前的工作目錄轉成絕對路徑。處理方式的路徑再以 `HomePath::from_absolute` 轉成 `HomePath`（§6.1），診斷的位置為 `Origin::Argument`，內容是選項名稱與原文 |
+| manifest 的寫法 | `modify` 的 `--target`、`--template`、`--copy` | 不轉換，交給 `RawPath::parse` 或 `SourceRelPath::parse` 檢查後原樣寫進 manifest。說明中的範例以單引號包住 `${APPDATA}`，避免被 shell 展開 |
+
+路徑參數以 `OsString` 接收，不是 UTF-8 的路徑由 §6.1 的轉換回報。
+
+**參數錯誤**：執行檔以 clap 的 `try_parse` 解析，錯誤訊息寫到標準錯誤，回傳 `1`。clap 預設以 `2` 結束，與 B-5 的「有保留的項目」衝突，所以由執行檔自行結束。此時還不確定 `--format` 的值，參數錯誤一律以文字輸出。`--help` 與 `--version` 寫到標準輸出，回傳 `0`。
+
+### 9.3 執行檔的流程
+
+1. 解析參數。`help`、`--help`、`--version` 與 `schema` 到此輸出並結束，不收集主機資訊，不讀取任何檔案（IF-002）。
+2. 以 platform 收集 `HostContext`，建立 platform 的 `FileSystem` 與 `GitClient`；`SyncHook` 使用 `NoSync`。
+3. 會寫入的子指令（`init`、`apply`、`add`、`modify`、`forget`）依序呼叫 `Layout::state_dir`、`WriteLock::acquire`；再以 `Layout::config_dir`、`load_local` 與 `Layout::new` 建立 `Layout`，呼叫 `RecoveryManager::clean_stale`。`init` 的 `Layout` 依 `--source` 決定，規則與 §4.16 第 1 步相同。其他子指令以同樣的方式建立 `Layout`，呼叫 `report_stale`。
+4. 呼叫 core：
+   - `diff`、`status`、`apply`：`ApplyRequest` 的 `started_at` 是執行檔取得的目前時間，core 不讀取時間（§8.1）。
+   - `init`：`InitializationService::initialize`，第一次套用的請求同上。
+   - `add`、`modify`、`forget`：以第 3 步的 `Layout` 建立 `StateStore` 與 `ManifestService`。不載入其他設定檔，因為其他設定檔的錯誤不影響管理指令（§4.8）。
+   - `query`、`list`：`ConfigLoader::load`；`is_complete()` 為 `false` 時到此結束（§4.9）。否則以 `ValueResolver::resolve`、`TemplateEngine` 與 `SourceLoader` 建立 `QueryService`。
+5. 結果寫到標準輸出，診斷依加入的順序寫到標準錯誤（IF-008），再依 §9.7 結束。
+
+### 9.4 標準輸出
+
+文字輸出供人閱讀，同一個 major 版本內可以調整；要穩定格式的程式使用 `--format json`（MNT-003 只約束 JSON）。文字輸出遵守下列規則：
+
+- 一個項目一行，欄位以空白對齊。home 內的路徑寫成 `~/` 開頭、以 `/` 分隔，與 manifest 的寫法相同。
+- 動作、處理方式、結果與原因使用 §9.6 的英文字串，文字與 JSON 的用語因此相同。
+
+`diff` 先列出計畫的每個項目，依計畫的順序（§4.12），再列出每個非「不變」項目的內容差異。drift 衝突在預設模式註明會略過；嚴格模式下有 drift 衝突時，第一行說明套用時不會寫入任何輸出（FR-DRF-003）：
+
+```
+strict mode: 1 drift conflict, apply would not write anything
+delete     ~/.config/old/rc           old-rc     proceed
+create     ~/.config/ghostty/config   ghostty    proceed
+update     ~/.gitconfig               gitconfig  retain: drift-conflict
+unchanged  ~/.config/nvim/init.lua    nvim       proceed
+update     ~/.ssh/config              ssh-config proceed  mode 0644 -> 0600
+
+--- /dev/null
++++ b/.config/ghostty/config
+@@ -0,0 +1,2 @@
++background = #1a1b26
++foreground = #c0caf5
+```
+
+- 內容差異是 unified diff（IF-003），前後各 3 行的上下文。檔名相對於 home，加上 `a/`、`b/`，建立與刪除的一方是 `/dev/null`，所以在 home 執行 `patch -p1` 就能套用。檔案結尾沒有換行時輸出 `\ No newline at end of file`，`patch` 的結果才會逐位元組相同。
+- 任一方不是 UTF-8 或含 NUL 字元時，只輸出 `Binary files a/<路徑> and b/<路徑> differ`。
+- 權限的改變寫在項目的那一行（`mode 0644 -> 0600`），不寫進差異：`patch` 不處理權限。只有權限不同的項目沒有內容差異。
+- 保留的項目也輸出差異，表示指定覆寫或接管時會寫入的內容。
+- 差異中的檔案內容原樣輸出，不做跳脫，`patch` 才能重現。IF-009 約束的是 rosamta 自己加上的控制字元（§9.5）。
+
+`status` 只列出動作不是「不變」的項目（FR-QRY-005），每行另加 `drift` 標記，不輸出差異。
+
+`apply` 逐項列出結果、動作、目標與輸出名稱，保留的項目附原因，接管的項目附備份位置（FR-APL-005、FR-MAN-019），最後一行是各結果的數量：
+
+```
+done      delete  ~/.config/old/rc          old-rc
+done      create  ~/.config/ghostty/config  ghostty
+retained  update  ~/.gitconfig              gitconfig  drift-conflict
+done      update  ~/.zshrc                  zshrc      backup: ~/.local/state/rosamta/backups/20261110T020304Z/.zshrc
+3 done, 1 retained
+```
+
+執行錯誤時，各項目依 `ItemStatus` 列為 `failed`、`reverted`、`not-reverted` 或 `not-run`；錯誤原因與回復的結果寫到標準錯誤（§9.5）。
+
+`list` 每個輸出一段：第一行是名稱、種類與是否啟用，之後每行一個屬性，依序為來源、目前平台的目標路徑、擁有程度、權限、接管與啟用它的條件（FR-MAN-026）。`query` 的三種結果、`add`、`modify`、`forget` 與 `init` 的格式相同：每個結果一段，第一行是主要對象，之後每行一個屬性。
+
+### 9.5 標準錯誤與診斷
+
+診斷依 `Diagnostics` 中的順序寫到標準錯誤，格式如下：
+
+```
+error[preflight.collision]: outputs "nvim" and "nvim-work" have the same target ~/.config/nvim/init.lua
+  --> ~/.local/share/rosamta/manifest.toml:12:1
+   = note: ~/.local/share/rosamta/manifest.toml:20:1: target of "nvim-work"
+   = hint: change the target of one output, or enable only one of them on this host
+```
+
+- 第一行是嚴重程度（`error` 或 `warning`）、代碼與訊息；`-->` 是 `primary`，`note` 是 `related`，`hint` 是修正方式的提示（USE-003）。位置依 `Origin` 顯示：檔案為 `~/` 開頭的路徑加行與欄；內建資源為 `builtin:ghostty`；環境變數為 `environment XDG_STATE_HOME`；命令列參數為 `argument --overwrite '~/x'`。
+- 訊息與說明使用英文。主要讀者中，自動化程式只看代碼與 exit code，AI 助理讀英文沒有困難；只維護一種語言，訊息與說明才不會在翻譯之間不一致。訊息的文字不屬於相容性的約束：同一個 major 版本內不變的是代碼（§4.1）與 JSON 的欄位（§9.6）。
+- 代碼的前綴是發現問題的階段：
+
+| 前綴 | 階段 | 定義 |
+| --- | --- | --- |
+| `config.` | 讀取設定檔 | §4.3 |
+| `values.` | 覆寫層級的解析 | §4.4 |
+| `template.` | 範本與原樣複製來源 | §4.5 |
+| `preflight.` | 預檢 | §4.6 |
+| `plan.`、`apply.` | 規劃、處理方式、模式檢查與批次的清理 | §4.12、§4.13、§4.15 |
+| `exec.`、`recovery.` | 執行與回復 | §4.13、§4.14 |
+| `manage.` | 納入、修改屬性、停止管理 | §4.8 |
+| `query.` | 查詢 | §4.9 |
+| `init.` | 初始化 | §4.16 |
+| `lock.` | 鎖定 | §4.10 |
+| `docedit.` | 保留格式的編輯 | §4.7 |
+
+**執行錯誤與回復**：`Executor` 不以診斷回報執行錯誤（§4.15），由執行檔把 `ApplyReport` 轉成診斷：
+
+- `failure` 轉成一個錯誤，代碼依 `ExecErrorKind`（§4.14），訊息含項目的輸出名稱與目標，以及作業系統的錯誤（FR-APL-003）。
+- `recovery` 的 `failures` 是空的時，加上一行 `note`，說明所有輸出與狀態檔都已恢復成套用前的狀態（FR-APL-003）。否則每個未能回復的目標一個錯誤，代碼依 `RecoveryFailureKind`，附原因與接管備份的位置（FR-APL-004）；狀態檔未能回復時另加一個錯誤。
+
+§4.10–§4.16 新增的代碼，訊息至少包含下列內容：
+
+| 代碼 | 訊息包含 | 提示 |
+| --- | --- | --- |
+| `lock.busy` | 鎖定檔的路徑 | 等另一個 rosamta 程序結束後重試 |
+| `lock.failed` | 狀態目錄或鎖定檔的路徑、作業系統的錯誤 | — |
+| `plan.inspect-failed` | 目標路徑、作業系統的錯誤 | — |
+| `apply.strict-conflict` | 輸出名稱與目標路徑 | 以預設模式套用，或以 `--overwrite`、`--accept` 指定處理後再以嚴格模式套用 |
+| `apply.choice-conflict`、`apply.choice-unmatched` | 選項與路徑 | 以 `rosamta status` 查看 drift 衝突的路徑 |
+| `apply.stale-batch` | 批次編號；說明上次沒有正常結束，殘留的檔案已清理或尚未清理 | 預覽與查詢時：執行任何會寫入的子指令來清理 |
+| `apply.cleanup` | 未能刪除的路徑、作業系統的錯誤 | — |
+| `exec.*`、`recovery.*` | 見上方 | — |
+| `init.clone-failed` | repo 的位址、git 的 exit status 與錯誤訊息（FR-INI-010） | — |
+| `init.source-exists` | 來源目錄的位置 | 空目錄：先刪除它；否則以 `--source` 指定其他位置 |
+
+**色彩**（IF-009）：只在該串流連接終端機（`std::io::IsTerminal`），而且沒有設定 `NO_COLOR` 時，為 `error`、`warning` 與差異的 `+`、`-` 行加上色彩。標準輸出與標準錯誤分別判斷。除此之外，rosamta 不輸出任何控制字元，包括游標控制與進度顯示。
+
+**程式內部的錯誤**：執行檔設定 panic hook，在標準錯誤說明這是 rosamta 的錯誤，附上 panic 的訊息與位置，回傳 `1`（§9.7）。套用途中發生 panic 時，結果與程序被終止相同：每個輸出與狀態檔都是完整的舊版或新版（REL-001、REL-002），下一個取得鎖定的指令依 §6.5 清理。
+
+### 9.6 結構化輸出
+
+`--format json` 時：
+
+- 標準輸出只有一個 JSON 文件，以換行結束。子指令失敗時同樣輸出，`result` 為 `null`。
+- 標準錯誤的每個診斷是一行 JSON（JSON Lines），包括 §9.5 由執行錯誤轉成的診斷。錯誤與警告不出現在標準輸出（IF-008）。
+- 參數錯誤時以文字輸出（§9.2）。
+
+```
+{
+  "json_version": 1,
+  "command": "apply",
+  "exit_code": 2,
+  "result": { "batch": "20261110T020304Z", "outcome": "partial", "items": [ … ] }
+}
+```
+
+`json_version` 只在 major 版本改變。診斷的欄位為 `severity`、`code`、`message`、`location`、`related`、`subjects`、`hint`；`location` 為 `{"origin", "path", "name", "line", "column"}`，`origin` 是 `source`、`home`、`builtin`、`environment` 或 `argument`。
+
+各子指令的 `result`：
+
+| 子指令 | `result` 的欄位 |
+| --- | --- |
+| `diff`、`status` | `strict`、`blocked`（`strict_blocked()`）、`items`。每個項目：`output`、`target`、`origin`（`enabled` 或 `cleanup`）、`action`、`disposition`、`reason`、`entry_kind`、`drift`、`mode`（`{"from", "to"}`，權限不變時為 `null`）；`diff` 另有 `diff`（unified diff 的文字）與 `binary` |
+| `apply` | `batch`、`outcome`、`items`、`failure`、`recovery`。每個項目：`output`、`target`、`action`、`status`、`reason`、`entry_kind`、`backup`。`failure` 為 `{"code", "item", "path", "message", "os_error"}`；`recovery` 為 `{"state", "failures"}`，每個失敗為 `{"path", "reason", "backup"}` |
+| `list` | `outputs`。每個輸出：`name`、`kind`、`enabled`、`enabled_by`（位置的清單）、`target`（`{"path"}`，或無法取得時 `{"unavailable"}` 附原因）、`source`（`{"template"}`、`{"builtin_template"}` 或 `{"copy"}`）、`ownership`、`permissions`、`takeover` |
+| `query refs` | `outputs`、`undetermined`，每個為 `{"name", "target", "enabled"}` |
+| `query output` | `outputs`，每個另有 `source` 與 `references`（`{"fields", "modules"}`） |
+| `query value` | `field`、`declared_at`、`value`、`source`（`{"layer", "location", "rule"}`）、`overridden` |
+| `add`、`modify`、`forget` | `output`、`changes`（每個為 `{"path", "kind"}`）、`unchanged` |
+| `init` | `source`、`source_created`、`changes`、`apply`（同 `apply` 的 `result`，沒有套用時為 `null`） |
+| `schema` | `kind`、`keys`（每個為 `{"key", "type", "required", "default", "description"}`）、`example`；`schema builtin` 為 `modules`，每個欄位為 `{"name", "type", "required", "range", "default", "description"}` |
+
+規則：
+
+- 鍵用 snake_case。路徑是絕對路徑，使用平台的分隔字元，程式可以直接使用；`target` 也一樣。沒有值的欄位寫成 `null`，不省略，欄位的集合因此與情況無關。
+- 欄位值（`RawValue`）以對應的 JSON 型別表示，日期時間為字串。
+- enum 一律是下表的字串，與文字輸出相同（§4.12 要求每個 enum 值有固定的字串）：
+
+| 型別 | 字串 |
+| --- | --- |
+| `Action` | `create`、`update`、`delete`、`unchanged` |
+| `Disposition` | `proceed`、`takeover`、`overwrite`、`accept`、`delete`、`retain` |
+| `RetainReason` | `drift-conflict`、`unmanaged`、`modified`、`unsupported-type`、`location-unconfirmed`、`reserved`、`forget-pending` |
+| `EntryKind`（`entry_kind`，只用於 `unmanaged`、`unsupported-type`） | `regular`、`directory`、`symlink`、`fifo`、`device`、`socket`、`reparse-point` |
+| `ItemStatus` | `done`、`retained`、`failed`、`reverted`、`not-reverted`、`not-run` |
+| `ApplyOutcome` | `completed`、`partial`、`failed` |
+| `StateRecovery` | `untouched`、`restored`、`not-restored` |
+| `RecoveryFailureKind` | 代碼 `recovery.changed`、`recovery.snapshot-mismatch`、`recovery.occupied`、`recovery.failed` |
+| `ChangeKind` | `created`、`modified`、`removed` |
+| `ListingKind` | `user`、`builtin`、`builtin-overridden`、`builtin-removed` |
+| `Layer` | `builtin-default`、`user-module`、`profile`、`local` |
+
+JSON 的型別定義在執行檔的 `output::json`（§9.10），由 core 的型別轉換而來；core 的型別不實作 `Serialize`。MNT-003 約束的欄位因此集中在一個 module，修改 core 的欄位名稱不會改變 JSON。第一版在執行檔的測試中保存每個子指令的 JSON 範例，作為 MNT-003 之後比對的基準（§1.2）。
+
+### 9.7 exit code
+
+| 子指令 | `0` | `2` | `1` |
+| --- | --- | --- | --- |
+| `apply` | `ApplyOutcome::Completed` | `Partial` | `Failed`；或 `apply` 回傳 `Err`，例如預檢或模式檢查失敗 |
+| `init` | 有第一次套用時同 `apply`；沒有時，`Diagnostics` 沒有錯誤 | 第一次套用為 `Partial` | 初始化失敗；第一次套用為 `Failed` 或預檢失敗 |
+| 其他子指令 | `Diagnostics` 沒有錯誤 | — | 有錯誤 |
+| 所有子指令 | `--help`、`--version` | — | 參數錯誤、取不到鎖定、`XDG_*` 不合法（§5.1）、程式內部的錯誤 |
+
+- 套用的對應來自 B-5 與 FR-APL-006–008，`outcome()` 的判定見 §4.14。`apply` 回傳 `Ok` 時只看 `outcome()`；此時 `Diagnostics` 中只有清理的警告，不影響結果。
+- 初始化的第一次套用以 `ApplyService::apply` 回傳 `Err` 時，`InitializationResult::apply` 為 `None`，錯誤在 `Diagnostics` 中，所以回傳 `1`（FR-INI-011）。
+- 預覽與摘要只回答「計畫是否產生」：有 drift 衝突，或嚴格模式下套用會被阻擋，仍回傳 `0`，由輸出的 `blocked` 與各項目說明。IF-007 規定套用以外的子指令只以成功與失敗區分；`2` 留給 B-5 的「有保留的項目」。
+- `query refs` 有無法判定的輸出時回報錯誤，回傳 `1`，結果不會被當成完整的答案（FR-QRY-004、§4.9）。
+- 警告不影響 exit code，例如 Profile 啟用了不存在的輸出（§5.7）。
+- 程序被訊號終止時，exit status 由作業系統決定；殘留的檔案依 §6.5 處理。rosamta 不攔截中斷訊號。
+
+### 9.8 不等待輸入與網路
+
+- 沒有任何子指令讀取標準輸入（USE-001）。`std::io::stdin` 列在所有 crate 的 clippy `disallowed-methods` 中（§11）。輸出不經過分頁程式，因為分頁程式在終端機中會等待按鍵。
+- 初始化呼叫 git 時，標準輸入接到空裝置，並設定 `GIT_TERMINAL_PROMPT=0`（§4.16）。另外設定 `GCM_INTERACTIVE=never` 與 `SSH_ASKPASS_REQUIRE=never`：Windows 的 Git Credential Manager 會開啟登入視窗，ssh 在沒有終端機時可能改用 askpass 程式，兩者都會等待使用者。ssh 在終端機中詢問金鑰密碼時讀的是終端機，不是標準輸入；rosamta 不覆寫使用者的 `core.sshCommand`，SSH 沿用使用者既有的設定（AS-4）。
+- 除了初始化的 `GitClient`，執行檔與 core 都不建立網路連線（IF-013、§3.1）。執行檔也以 clippy 禁用 `std::net` 的型別（§11）。
+
+### 9.9 說明與格式說明
+
+**說明**（IF-002）：每個子指令的說明由 clap 產生，包含用途、參數與選項，另以 `after_long_help` 加上兩段固定的文字：`Exit status`（該子指令可能的 exit code，依 §9.7）與 `Examples`（至少一個範例）。說明是編進執行檔的文字，在 §9.3 第 1 步輸出，不需要來源目錄、主機資訊或網路。06 在沒有來源目錄與網路的環境，對每個子指令檢查這四項內容。
+
+**格式說明**（IF-005）：`schema manifest`、`schema module`、`schema profile`、`schema local` 列出該檔案的每個鍵：名稱、TOML 型別、是否必填、預設值與說明，最後附一個範例檔。內容來自 `config::schema`（§4.3），`ConfigLoader` 也以同一份資料判定不認得的鍵並列出可用的鍵（FR-MAN-029）。說明與實際接受的鍵出自同一個來源，不會不一致；單元測試以 `ConfigLoader` 載入每個範例檔，確認沒有任何診斷（IF-005 的驗收條件）。
+
+**內建模組的欄位**（IF-006）：`schema builtin [<模組>]` 列出 `config::builtin::modules()` 中每個欄位的名稱、型別、是否必填、範圍或格式、預設值與說明。預檢使用的是同一份宣告（FR-MOD-003），所以列出的內容與實際的檢查一致。
+
+### 9.10 執行檔的 module 與外部 crate
+
+| module | 責任 |
+| --- | --- |
+| `main` | 進入點：設定 panic hook，呼叫 `cli` 與 `run`，依 §9.7 結束 |
+| `cli` | clap 的參數定義與說明文字（§9.9） |
+| `args` | 參數轉成 core 的請求：路徑的轉換、`--set` 的值、名稱或路徑的判斷（§9.2） |
+| `run` | §9.3 的流程，每個子指令一個函式；建立 platform 的實作與 core 的服務 |
+| `output::text` | 文字的結果與診斷（§9.4、§9.5） |
+| `output::json` | JSON 的型別與轉換（§9.6） |
+| `output::diff` | unified diff（§9.4） |
+| `term` | 判斷串流是否連接終端機、`NO_COLOR`（§9.5） |
+
+| crate | 用途 | 選擇的理由 |
+| --- | --- | --- |
+| clap（derive） | 子指令、選項與說明 | `try_parse` 讓執行檔自行決定 exit code；參數可以取得 `OsString`；說明可以附加固定的段落（IF-002）。pico-args 等較小的套件要手寫說明，四項內容較難與參數保持一致 |
+| similar | unified diff | 純 Rust，可輸出 `\ No newline at end of file`；diffy 也能產生 unified diff，但使用者較少 |
+| serde、serde_json | JSON 輸出 | core 已依賴，用於狀態檔（§3.1） |
+
+是否連接終端機使用標準函式庫的 `std::io::IsTerminal`，不另加套件。版本在實作開始時以 `=` 鎖定（§3.1）。
