@@ -3006,3 +3006,45 @@ JSON 的型別定義在執行檔的 `output::json`（§9.10），由 core 的型
 | serde、serde_json | JSON 輸出 | core 已依賴，用於狀態檔（§3.1） |
 
 是否連接終端機使用標準函式庫的 `std::io::IsTerminal`，不另加套件。版本在實作開始時以 `=` 鎖定（§3.1）。
+
+## 10. 設計模式的使用
+
+設計模式是反覆出現的設計問題的解法（Valente Ch.6）。模式會增加類別與間接層，用在沒有對應問題的地方只會讓設計更難懂；Valente 稱之為 patternitis。本節只列出有具體問題要解決的模式，以及考慮過但不採用的模式。
+
+### 10.1 使用的模式
+
+| 模式 | 位置 | 解決的問題 | 不採用時的代價 |
+| --- | --- | --- | --- |
+| Adapter | platform 的 `unix`、`windows` 實作 `FileSystem`；`git` 實作 `GitClient`（§3.3）。core 的 `TemplateEngine` 包裝 MiniJinja，`TomlEditor` 包裝 toml_edit（§4.5、§4.7） | 外部 API 的形狀與 core 需要的不同：rustix 與 windows-sys 是各平台的系統呼叫，core 要的是「依觀測綁定的操作」。轉換集中在一個 module，外部 API 不出現在其他地方 | core 直接呼叫系統 API 或 MiniJinja，換平台、換套件或升級時要修改每個呼叫端；core 也無法只編譯一份邏輯（§3.1） |
+| Decorator | testkit 的 `FaultFs` 包裝任一 `FileSystem`，把符合條件的呼叫改成失敗（§8.3） | 測試要在指定的操作注入失敗，而不修改 platform 的實作。包裝後仍是 `FileSystem`，core 不知道差別 | 在 platform 的實作中加入測試用的分支，發佈的程式就不是測試的程式（§8.2） |
+| Observer（只有一個觀察者） | `SyncHook`：core 在同步點呼叫 `reach`，通知目前的位置（§8.2） | 測試要在 core 執行到某一步時改動檔案系統，而 core 不能知道測試的存在 | 以 feature 開關在 core 中加入測試程式碼，或以時間等待碰運氣，結果無法重現 |
+| Facade | `ApplyService` 對執行檔只提供 `preview` 與 `apply`；`InitializationService` 只提供 `initialize`（§4.15、§4.16） | 預覽與套用要以相同的順序呼叫載入、解析、預檢與規劃，FR-PLN-006 才成立；初始化要重用同一個套用流程（FR-INI-011） | 每個子指令各自排列步驟，順序不一致時預覽與套用的結果不同 |
+| Factory（靜態工廠方法） | platform 對外只提供一個建構函式，回傳 `FileSystem` 的實作，依 `#[cfg]` 選擇 `unix` 或 `windows`（§3.3） | 執行檔與 testkit 不必知道具體的型別，也不必寫 `#[cfg]` | 平台的選擇散在每個建立 `FileSystem` 的地方 |
+| Command（GoF） | `FsOp` 以資料表示一個操作，交給 `FileSystem::prepare`；`Done` 記下已生效的操作與回復它需要的資料，`RecoveryManager` 依相反順序回復（§4.10、§4.13） | 回復必須知道本批做過哪些操作，以及每個操作要怎麼撤銷（§6.6 的回復表） | 回復要從計畫重新推算做過什麼，失敗發生在操作中途時無法確定 |
+
+Command 不在 Valente Ch.6 介紹的模式中，名稱取自 GoF。回復快照的角色接近 Memento：`RecoveryManager` 保存操作前的內容，但不讓其他類別讀取。
+
+### 10.2 以型別表示前置條件
+
+這不是 GoF 的模式，而是本設計反覆使用的做法：把「必須先做某件事」寫成只有做了那件事才能取得的值，由編譯器檢查，不靠 review。
+
+| 型別 | 只能由誰建立 | 保證 |
+| --- | --- | --- |
+| `WriteLock` | `WriteLock::acquire`（§4.10） | 會改變檔案的操作都已取得鎖定；預覽與查詢無法寫入（FR-PLN-004、FR-QRY-006） |
+| `Reported`、`Checked<T>` | `Diagnostics::error`（§4.1） | 回傳失敗時至少已記錄一個錯誤 |
+| `TemplateValues` | `PreflightChecker::check_inputs`（§4.5） | 交給範本的值都通過了型別檢查 |
+| `DesiredContent` | `Planner`（§4.12） | 寫入的內容來自預檢時的那一次渲染或讀取（A24） |
+| `ApprovedPlan` | `ApplyService`（§4.14） | `Executor` 只執行通過預檢與模式檢查的計畫 |
+| `RawPath`、`HomePath`、`SourceRelPath` 與名稱的 newtype | 各自的 `parse`、`expand` 與 `FromStr`（§4.1） | 路徑已依 §6.1 正規化，名稱符合 §5.3 的格式 |
+
+`TemplateValues`、`DesiredContent`、`ApprovedPlan` 的建構函式是 `pub(crate)`，Rust 無法進一步限制成只有某個 module 能呼叫，所以由 §11.3 的檢查補上。
+
+### 10.3 考慮過但不採用的模式
+
+| 模式 | 不採用的理由 |
+| --- | --- |
+| Singleton | `HostContext`、`FileSystem`、目前時間都由呼叫端傳入（§8.1）。Valente 指出單例本質上是全域變數，會隱藏依賴，也讓測試難以替換 |
+| Template Method | Rust 沒有實作繼承。共用的流程寫在 Facade 的函式中，變化的部分以 trait 物件傳入，即 Valente Ch.5 的「優先使用組合而非繼承」 |
+| Visitor | 計畫的項目、設定值與診斷都以 enum 表示，以 `match` 處理每一種情況。新增一個值時，編譯器指出每個沒有處理它的 `match`，不需要 Visitor 的雙重分派 |
+| Strategy | 規則的變化，例如 drift 的處理方式與嚴格模式，是 `Choices` 中的資料，由 `Planner` 依 §5.11 判定（§4.12）。處理方式只有固定的幾種，也不開放使用者擴充，寫成可替換的物件只會把判定分散到多個類別 |
+| Builder | 請求型別的欄位少，而且都是必填或有明確的預設值，以結構直接建立即可 |
