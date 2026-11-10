@@ -300,7 +300,7 @@ pub use unix::Dir;
 pub use windows::Dir;
 
 #[cfg(unix)]
-mod unix {
+pub(crate) mod unix {
     use super::{Entry, Identity, Kind};
     use rustix::fs::{AtFlags, CWD, FileType, Mode, OFlags, Stat};
     use std::ffi::OsStr;
@@ -316,7 +316,7 @@ mod unix {
     // The casts are no-ops on Linux but not on macOS (`st_dev` is `i32`,
     // `st_mode` is `u16`).
     #[allow(clippy::unnecessary_cast)]
-    fn entry_of(st: &Stat) -> Entry {
+    pub(crate) fn entry_of(st: &Stat) -> Entry {
         let kind = match FileType::from_raw_mode(st.st_mode) {
             FileType::RegularFile => Kind::File,
             FileType::Directory => Kind::Dir,
@@ -742,7 +742,7 @@ pub(crate) mod windows {
 
     /// Marks the handle's file for deletion when the handle closes. The
     /// handle needs `DELETE` access.
-    fn delete_on_close(handle: &impl AsRawHandle) -> io::Result<()> {
+    pub(crate) fn delete_on_close(handle: &impl AsRawHandle) -> io::Result<()> {
         let info = FILE_DISPOSITION_INFO { DeleteFile: true };
         // SAFETY: info is a FILE_DISPOSITION_INFO of the size passed in.
         let ok = unsafe {

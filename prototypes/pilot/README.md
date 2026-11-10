@@ -9,6 +9,7 @@
 | P3 | 符號連結的接管與回復：在備份目錄為連結本身建立 hard link，再以一次 rename 換成一般檔案；回復時把備份 rename 回原位。所指檔案不變，過程中不建立新的符號連結；另記錄目前的使用者能否建立符號連結（SEC-002、DC-001、DC-003，04 §5 A3） | `tests/p3_symlink.rs` |
 | P4 | toml_edit 保留格式的編輯與錯誤位置（05 §2.2） | `tests/p4_toml_edit.rs` |
 | P5 | MiniJinja 的靜態引用與錯誤訊息（05 §2.3） | `tests/p5_minijinja.rs` |
+| P6 | 05 §6 新增的平台操作：不覆蓋的建立與目錄改名；Linux、macOS 的交換式改名，以及據此做的取代與刪除會找出最後一次核對後的改動並放回原位；Windows 持有目標核對時，其他程序無法改名、刪除或寫入；Windows DACL 的建立與複製；多程序鎖定；以 `O_NONBLOCK` 開啟 FIFO（ASM-16–ASM-21） | `tests/p6_platform_ops.rs` |
 
 ## 執行
 
