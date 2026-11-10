@@ -144,12 +144,12 @@ Askama 等在編譯期處理範本的引擎無法載入使用者的範本，不�
 | `Environment::empty()` 中使用未註冊的內建函式、過濾器或測試 | 回報找不到該函式、過濾器或測試 |
 | Handlebars：語法錯誤、引用不存在的欄位 | 都有行號，欄位錯誤含名稱；沒有列出引用的 API |
 
-USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱可由 MiniJinja 的錯誤取得；修正提示由 rosamta 依錯誤類型與欄位宣告產生，例如列出名稱相近的欄位。以下兩項留給 §4：
+USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱可由 MiniJinja 的錯誤取得；修正提示由 rosamta 依錯誤類型與欄位宣告產生，例如列出名稱相近的欄位。以下兩項的處理見 §4.5：
 
 - 字串沒有結束時，錯誤指向檔案結尾，須補上字串開始的行號。
 - 靜態比對找到的錯誤欄位沒有行號，須另外定位。
 
-是否開放 `include` 也留給 §4 決定。開放時，靜態分析須自行展開被載入的範本。
+開放 `include` 時，靜態分析須自行展開被載入的範本；§4.5 決定第一版不開放。
 
 ## 3. 套件結構
 
@@ -189,19 +189,19 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | 0 | `host` | `HostContext`、`Platform` | 主機資訊與環境變數的快照 | `diag` |
 | 0 | `path` | 目標路徑的型別 | `~` 與環境變數的展開、home 內的相對路徑、路徑比較（§6） | `diag`、`host` |
 | 0 | `fs` | `FileSystem`、`FileInspection` | trait，以及它使用的檔案身分、類型、內容指紋與目錄 handle；同步點與 `SyncHook` trait（§8.2） | `diag`、`path` |
-| 0 | `layout` | — | 程式使用的位置（§5.1）與保留位置（§5.2） | `diag`、`host`、`path` |
-| 1 資料 | `config` | `ConfigLoader`、`EffectiveConfig`、`Manifest`、`OutputDefinition`、`Module`、`Field`、`Profile`、`ProfileRule`、`LocalSettings`、`Template` | 讀取四種設定檔與內建資源，合併內建輸出與覆寫（§5.3–§5.9） | 第 0 層 |
-| 1 | `docedit` | — | 保留格式的 TOML 編輯（§5.3） | `diag` |
+| 0 | `layout` | `Layout` | 程式使用的位置（§5.1）與保留位置（§5.2） | `diag`、`host`、`path` |
+| 1 資料 | `config` | `ConfigLoader`、`EffectiveConfig`、`Manifest`、`OutputDefinition`、`ModuleDecl`、`FieldDecl`、`Assignment`、`Profile`、`ProfileRule`、`LocalSettings`、`TemplateRef` | 讀取四種設定檔與內建資源，合併內建輸出與覆寫（§5.3–§5.9） | 第 0 層 |
+| 1 | `docedit` | `TomlEditor` | 保留格式的 TOML 編輯（§5.3） | `diag` |
 | 1 | `resolve` | `ValueResolver`、`ResolvedValues`、`ValueSource` | 四層覆寫與值的來源 | 第 0 層、`config` |
-| 1 | `template` | — | MiniJinja 環境、範本 loader、靜態引用、原樣複製來源的讀取 | 第 0 層、`config` |
+| 1 | `template` | `TemplateEngine`、`SourceLoader`、`TemplateMeta`、`References`、`TemplateValues` | MiniJinja 環境、範本 loader、靜態引用、原樣複製來源的讀取 | 第 0 層、`config` |
 | 1 | `state` | `StateStore`、`StateFile`、`ManagedOutputRecord`、`ComparisonMetadata`、`StateLoadResult` | 狀態檔的格式、載入與原子提交（§5.10） | 第 0 層 |
 | 2 流程 | `plan` | `Planner`、`ApplyPlan`、`PlanItem` | 計畫與比較基準的判定（§5.11） | 第 0 層、`config`、`resolve`、`template`、`state` |
 | 2 | `preflight` | `PreflightChecker`、`AnalysisContext` | 整批預檢 | 第 0 層、`config`、`resolve`、`template`、`state`、`plan` |
 | 2 | `recovery` | `RecoveryManager`、`RecoveryReport` | 回復快照的保存與還原 | 第 0 層、`state` |
 | 2 | `exec` | `Executor`、`ApplyReport`、`ItemResult` | 執行計畫、製作接管備份（§5.12） | 第 0 層、`state`、`plan`、`recovery` |
 | 3 子指令 | `apply` | `ApplyService`、`ApplyRequest` | 預覽、摘要與套用的流程 | 第 0 層、`config`、`resolve`、`template`、`state`、第 2 層 |
-| 3 | `manage` | `ManifestService`、`OutputPropertyPatch`、`OperationResult` | 納入、修改屬性、停止管理（§5.13） | 第 0 層、`config`、`docedit`、`state` |
-| 3 | `query` | `QueryService`、`OutputSummary`、`OutputDescription`、`ResolvedValueDescription` | 引用、輸出與欄位值的查詢 | 第 0 層、`config`、`resolve`、`template` |
+| 3 | `manage` | `ManifestService`、`AddRequest`、`OutputPropertyPatch`、`OperationResult` | 納入、修改屬性、停止管理（§5.13） | 第 0 層、`config`、`docedit`、`state` |
+| 3 | `query` | `QueryService`、`OutputSummary`、`OutputListing`、`OutputDescription`、`ResolvedValueDescription` | 引用、輸出與欄位值的查詢 | 第 0 層、`config`、`resolve`、`template` |
 | 3 | `init` | `InitializationService`、`GitClient`、`InitializationRequest`、`InitializationResult` | 初始化 | 第 0 層、`config`、`docedit`、`apply` |
 
 與 03 C4 不同的依賴：
@@ -225,6 +225,841 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | `rosamta` | `cli` 等 | 子指令、參數與輸出格式（§9） |
 
 `unix` 與 `windows` 以 `#[cfg]` 選擇，對外只提供同一個 `FileSystem` 實作的建構函式。
+
+## 4. 類別詳細規格
+
+本節把 03 C1–C4 的類別細化成 Rust 的公開介面。每個類別寫出責任、介面、前置與後置條件、錯誤，以及它對其他 module 隱藏的設計決定：這些決定改變時，只需要修改該 module。§4.1–§4.9 是設定、範本、管理與查詢；規劃、執行、回復、狀態、檔案系統與初始化在 §4.10 之後。詳細類別圖見 [uml.md](uml.md) 的 D1–D4。
+
+介面以 Rust 簽名表示，省略 derive、私有欄位與 `pub(crate)` 的項目。生命週期 `'a` 表示服務借用呼叫端建立的依賴（§8.1）。實作時可以調整名稱，但型別表達的限制必須保留，例如「先取得鎖定才能修改設定檔」。
+
+與 03 不同的地方：
+
+| 03 | 本節 | 理由 |
+| --- | --- | --- |
+| C1 `Field` 同時有宣告與值 | 分成欄位宣告 `FieldDecl` 與設定值 `Assignment` | 值來自四個層級的不同檔案（§5.5–§5.8），不屬於模組的宣告 |
+| C1 `sourceKind` 與 `sourcePath` | 一個 enum `SourceSpec` | 範本與原樣複製只能選一種，以型別排除兩者都有或都沒有的情況 |
+| C1 `Template` | 來源 `TemplateRef` 與中繼資料 `TemplateMeta` | 中繼資料寫在範本裡（§5.9），讀到範本才知道 |
+| C2 `ResolvedValues.values` 為 `FieldValue` | 存未檢查的 `RawValue`，檢查後才轉成 `TemplateValues` | 04 §2 把型別檢查交給 `PreflightChecker`；以型別保證未通過檢查的值不會進入範本 |
+| C4 `ConfigLoader.load()` | `load_local` 與 `load` | 來源目錄的位置記在本機設定（§5.1），必須先讀本機設定 |
+| C4 `PreflightChecker.validate(context, optionalPlan)` | `check_inputs`、`check_targets`、`check_plan` 三個階段 | 三個階段需要的資料不同。USE-004 要求欄位值有錯時仍找出目標碰撞，碰撞的檢查因此不能等到渲染之後 |
+| C4 `QueryService` | 加上 `list_outputs` | FR-MAN-026 的列出輸出是唯讀的，與其他查詢共用 Profile 判定 |
+| C4 管理方法的參數 | 加上 `&WriteLock`；`add` 改收 `AddRequest` | 以型別確保修改前已取得鎖定（§6.7）；納入時可以指定輸出名稱 |
+| C4 回傳 `Diagnostics` | 以 `&mut Diagnostics` 收集（§4.1） | 錯誤與警告走同一條路，USE-004 才能一次列出全部 |
+
+### 4.1 共通約定
+
+**診斷**（`diag`）：使用者輸入的問題與 I/O 失敗都以診斷回報，不用 Rust 的 panic。panic 只表示程式本身的錯誤，例如違反內部的不變量。
+
+```rust
+pub enum Severity { Error, Warning }
+
+pub struct SourceLocation {
+    pub origin: Origin,
+    pub line: Option<u32>,   // 從 1 起算；對應原檔的行（§5.3）
+    pub column: Option<u32>, // 從 1 起算，以 Unicode 字元計
+}
+
+pub enum Origin {
+    Source(SourceRelPath),   // 來源目錄中的檔案
+    Home(HomePath),          // home 內的其他檔案，例如本機設定
+    Builtin(&'static str),   // 內建資源，例如 "builtin:ghostty"
+    Environment(String),     // 環境變數的名稱
+    Argument(String),        // 命令列參數
+}
+
+pub struct Diagnostic {
+    pub severity: Severity,
+    pub code: DiagCode,
+    pub message: String,
+    pub primary: Option<SourceLocation>,
+    pub related: Vec<(SourceLocation, String)>, // 其他相關位置與說明，例如重複的另一處
+    pub subjects: Vec<Subject>,                 // 涉及的輸出、模組、欄位或路徑
+    pub hint: Option<String>,                   // 修正方式的提示（USE-003）
+}
+
+pub struct Diagnostics { /* 依加入順序保存 */ }
+
+impl Diagnostics {
+    pub fn error(&mut self, d: Diagnostic) -> Reported;
+    pub fn warning(&mut self, d: Diagnostic);
+    pub fn has_errors(&self) -> bool;
+    pub fn iter(&self) -> impl Iterator<Item = &Diagnostic>;
+}
+
+/// 只能由 `Diagnostics::error` 建立，表示錯誤已經記錄。
+pub struct Reported(());
+pub type Checked<T> = Result<T, Reported>;
+```
+
+- 每個可能遇到使用者輸入問題的函式都接收 `&mut Diagnostics`。回傳 `Checked<T>` 的函式失敗時，至少已記錄一個錯誤；呼叫端用 `?` 往上傳，不必再回報一次。能在錯誤之後繼續檢查的函式，例如 `ConfigLoader::load`，直接回傳結果，錯誤留在 `Diagnostics` 中。
+- `DiagCode` 是 enum，每個值有固定的字串，例如 `config.unknown-key`，供 IF-004 的結構化輸出使用，同一個 major 版本內不改名（MNT-003）。各類別可能產生的代碼列在該類別的「錯誤」中。
+- `message` 的語言與輸出格式由 §9 決定。core 不組合絕對路徑：`Origin` 保存 home 內的相對位置，由執行檔依 `HostContext` 轉成使用者看到的路徑。
+- 除了套用，子指令的 exit code 只看 `has_errors()`：有錯誤為 `1`，否則為 `0`（IF-007）。套用的 exit code 見 §9。
+
+**名稱**：以 newtype 表示，建構時檢查 §5.3 的格式，之後不必再檢查。
+
+```rust
+pub struct OutputName(String); // [A-Za-z0-9][A-Za-z0-9_-]*
+pub struct ModuleName(String); // [A-Za-z_][A-Za-z0-9_]*
+pub struct FieldName(String);  // 同 ModuleName
+pub struct Tag(String);        // [A-Za-z0-9_-]+
+pub struct FieldRef { pub module: ModuleName, pub field: FieldName } // 顯示為 theme.foreground
+
+impl std::str::FromStr for OutputName { type Err = NameError; /* … */ }
+// 其餘名稱型別同樣實作 FromStr；FieldRef 以第一個 "." 分開模組與欄位
+
+pub struct Located<T> { pub value: T, pub at: SourceLocation }
+```
+
+**路徑**（`path`）：§6.1 的展開與正規化，以三種型別區分處理的階段。
+
+```rust
+/// manifest 的 target、本機設定的 source 與 XDG_* 變數的原文，已檢查語法（§5.4）。
+pub struct RawPath { /* 文字片段、~、${NAME} 的序列 */ }
+impl RawPath {
+    pub fn parse(text: &str) -> Result<RawPath, PathSyntaxError>;
+    pub fn expand(&self, host: &HostContext) -> Result<HomePath, PathError>; // §6.1 第 1–5 步
+}
+
+/// home 內正規化後的相對路徑，不含 home 本身；顯示為 ~/a/b。
+pub struct HomePath { /* 元件的序列，至少一個 */ }
+
+/// 來源目錄內的相對路徑：manifest 的 template 與 copy。
+pub struct SourceRelPath { /* 元件的序列，至少一個 */ }
+impl SourceRelPath {
+    pub fn parse(text: &str) -> Result<SourceRelPath, PathSyntaxError>;
+}
+```
+
+`SourceRelPath::parse` 只接受以 `/` 分隔的相對路徑，不得含 `\`；去掉 `.` 與空元件，`..` 移除前一個元件，超出來源目錄時失敗（FR-MAN-005、04 §3.1）。元件的名稱限制與 §6.1 第 5 步相同，三個平台都檢查，來源目錄才能在三個平台使用。這是純文字的處理，實際讀取時路徑中的連結由 `FileSystem` 拒絕（§6.1）。
+
+**主機資訊**（`host`）：
+
+```rust
+pub enum Platform { Linux, Macos, Windows }
+
+pub struct HostContext {
+    pub platform: Platform,
+    pub hostname: String,          // IF-011
+    pub home: std::path::PathBuf,  // home 的原值（§6.1）
+    env: Env,
+}
+impl HostContext {
+    pub fn new(platform: Platform, hostname: String, home: PathBuf,
+               env: impl IntoIterator<Item = (OsString, OsString)>) -> Self;
+    /// Windows 上不分大小寫比對名稱，與作業系統相同。
+    pub fn env(&self, name: &str) -> Option<&OsStr>;
+}
+```
+
+**本節用到的後半介面**：`FileSystem` 的讀取、列出目錄、建立、取代與刪除，`Observation`（§6.3 的觀測），`WriteLock`（§6.7 的鎖定），`SyncHook`（§8.2），以及 `StateStore`、`StateLoadResult`、`TargetSet`、`ApplyPlan`，都在 §4 後半定義。本節只依賴下列行為：
+
+- 讀取：以 home 或來源目錄為起點，依 §6.1 走訪，只開啟一般檔案，回傳內容與觀測。路徑中有連結、檔案是連結或其他類型時失敗，並說明類型。
+- 列出目錄：回傳每個項目的名稱與類型，不跟隨連結。
+- 建立、取代、刪除：依 §6.3 綁定；取代時要求被取代的檔案仍是指定的觀測版本。
+- `WriteLock` 只能由取得鎖定的函式建立，持有到程序結束。
+
+### 4.2 設定資料型別
+
+C1、C2 的資料型別，放在 `config` module。所有型別都是讀取後不再修改的值；修改設定檔經由 `TomlEditor`（§4.7），寫入後重新載入。
+
+```rust
+pub struct EffectiveConfig {
+    pub manifest: Manifest,
+    pub modules: ModuleSet,
+    pub profile: Profile,
+    pub assignments: Vec<Assignment>,  // 覆寫層級 2：modules/ 中的 [values.*]
+    pub manifest_file: Option<LoadedFile>,
+    broken: BTreeSet<Origin>,          // 無法完整讀取的檔案
+}
+impl EffectiveConfig {
+    pub fn is_complete(&self) -> bool;
+    /// 包含因錯誤而未進入 manifest 的輸出，用來避免連帶的「沒有這個輸出」警告。
+    pub fn is_declared(&self, name: &OutputName) -> bool;
+}
+
+pub struct LoadedFile { pub origin: Origin, pub text: String, pub observation: Observation }
+
+pub struct Manifest {
+    outputs: BTreeMap<OutputName, OutputDefinition>,      // 合併內建宣告與覆寫後的有效輸出
+    removed_builtins: BTreeMap<OutputName, SourceLocation>, // removed = true 的內建輸出（§5.13）
+}
+impl Manifest {
+    pub fn get(&self, name: &OutputName) -> Option<&OutputDefinition>;
+    pub fn outputs(&self) -> impl Iterator<Item = &OutputDefinition>; // 依名稱排序
+    pub fn removed_builtins(&self) -> impl Iterator<Item = (&OutputName, &SourceLocation)>;
+}
+
+pub struct OutputDefinition {
+    pub name: OutputName,
+    pub kind: OutputKind,                    // Builtin、BuiltinOverridden、User
+    pub declared_at: SourceLocation,         // [outputs.x] 或 [builtin.x] 的表格標頭；未覆寫的內建輸出為 Builtin
+    pub source: Located<SourceSpec>,
+    pub targets: PlatformTargets,
+    pub ownership: Located<Ownership>,
+    pub permissions: Option<Located<Permissions>>,
+    pub takeover: Located<bool>,
+}
+
+pub enum SourceSpec { Template(TemplateRef), Verbatim(SourceRelPath) }
+pub enum TemplateRef { Builtin(BuiltinTemplate), User(SourceRelPath) }
+pub enum Ownership { Full, CreateOnly }      // FR-MAN-012、FR-MAN-013
+pub struct Permissions(u16);                 // 0..=0o777（§5.4）
+
+pub struct PlatformTargets { linux: Option<Located<RawPath>>,
+                             macos: Option<Located<RawPath>>,
+                             windows: Option<Located<RawPath>> }
+impl PlatformTargets {
+    pub fn get(&self, platform: Platform) -> Option<&Located<RawPath>>;
+}
+```
+
+每個屬性都帶有位置。覆寫過的內建輸出，屬性的位置指向 `[builtin.*]` 中寫下它的那一行；沿用內建宣告的屬性，位置是 `Origin::Builtin`。FR-PLN-009 回報碰撞時，使用 `target` 的位置。
+
+```rust
+pub struct ModuleSet { modules: BTreeMap<ModuleName, ModuleDecl> }
+impl ModuleSet {
+    pub fn get(&self, name: &ModuleName) -> Option<&ModuleDecl>;
+    pub fn field(&self, r: &FieldRef) -> Option<&FieldDecl>;
+    pub fn iter(&self) -> impl Iterator<Item = &ModuleDecl>;
+}
+
+pub struct ModuleDecl {
+    pub name: ModuleName,
+    pub builtin: bool,
+    pub version: Option<u32>,                   // FR-TPL-004
+    pub fields: BTreeMap<FieldName, FieldDecl>,
+    pub declared_at: SourceLocation,
+}
+
+pub struct FieldDecl {
+    pub name: FieldName,
+    pub ty: FieldType,
+    pub required: bool,
+    pub description: Option<String>,
+    pub default: Option<FieldValue>,            // 只有內建模組有（§5.6）
+    pub declared_at: SourceLocation,
+}
+
+pub enum FieldType {
+    String,
+    Integer { min: Option<i64>, max: Option<i64> },
+    Decimal { min: Option<f64>, max: Option<f64> },
+    Boolean,
+    Color,
+    Enum { options: Vec<String> },
+    List { items: Box<FieldType>, min_items: Option<usize>, max_items: Option<usize> },
+    Map { keys: KeyFormat, values: Box<FieldType> },
+}
+pub enum KeyFormat { Identifier, Word }
+
+impl FieldType {
+    /// §5.5 的檢查與正規化，例如色碼轉成小寫。
+    pub fn check(&self, raw: &Located<RawValue>) -> Result<FieldValue, Violation>;
+}
+
+/// 設定檔中的值，尚未依欄位宣告檢查。不含 toml_edit 的型別。
+pub enum RawValue {
+    String(String), Integer(i64), Float(f64), Boolean(bool), Datetime(String),
+    Array(Vec<Located<RawValue>>), Table(BTreeMap<String, Located<RawValue>>),
+}
+
+/// 通過檢查的值。
+pub enum FieldValue {
+    String(String), Integer(i64), Decimal(f64), Boolean(bool), Color([u8; 3]),
+    Enum(String), List(Vec<FieldValue>), Map(BTreeMap<String, FieldValue>),
+}
+
+pub struct Violation {
+    pub at: SourceLocation,  // 違反條件的值，清單元素或對照表的值時指向該元素
+    pub element: Vec<ElementKey>, // 例如 ansi[3]、env.EDITOR
+    pub condition: String,   // 違反的條件，例如「1 到 72 的整數」
+}
+
+pub struct Assignment {
+    pub field: FieldRef,
+    pub value: Located<RawValue>, // 位置是值所在的行（FR-PLN-008）
+    pub key_at: SourceLocation,   // 鍵所在的行，供重複時列出（FR-PRF-012）
+}
+```
+
+`FieldType` 是遞迴的：`List` 的元素與 `Map` 的值都是一個 `FieldType`，對應 §5.5 中 `items`、`values` 以欄位宣告的寫法描述。
+
+```rust
+pub struct Profile { pub rules: Vec<ProfileRule> }      // profile.toml 不存在時為空
+
+pub struct ProfileRule {
+    pub index: usize,                 // 在檔案中的順序，只用來顯示；結果不受它影響（FR-PRF-011）
+    pub os: Option<Platform>,
+    pub hostname: Option<String>,
+    pub tags: BTreeSet<Tag>,
+    pub enable: Vec<Located<OutputName>>,
+    pub values: Vec<Assignment>,      // 覆寫層級 3
+    pub declared_at: SourceLocation,  // [[rules]] 所在的行
+}
+impl ProfileRule {
+    /// os 相同、hostname 不分 ASCII 大小寫相同、tags 都在本機標籤中；未寫的項目不限制。
+    pub fn matches(&self, host: &HostContext, local: &LocalSettings) -> bool;
+}
+impl Profile {
+    /// 每個啟用的輸出，以及啟用它的條件。名稱不在 manifest 中的也列入，由預檢警告。
+    pub fn enabled(&self, host: &HostContext, local: &LocalSettings) -> EnabledOutputs;
+}
+pub struct EnabledOutputs { by_output: BTreeMap<OutputName, Vec<usize>> }
+
+pub struct LocalSettings {
+    pub source: Option<Located<RawPath>>,
+    pub tags: BTreeSet<Tag>,
+    pub values: Vec<Assignment>,      // 覆寫層級 4
+    pub file: Option<LoadedFile>,     // 本機設定不存在時為 None
+}
+```
+
+`ProfileRule::matches` 與 `Profile::enabled` 是純函式，Profile 的 AND、OR 規則（FR-PRF-007）只寫在這裡，`ValueResolver`、`Planner` 與 `QueryService` 都呼叫它們。
+
+**內建資源**（`config::builtin`）：內建模組、內建輸出與內建範本是編進執行檔的文字（DC-004）。內建模組與內建輸出以 §5.5、§5.4 的 TOML 格式撰寫，由同一個解析器讀取，內建輸出寫成 `[outputs.*]` 表格。
+
+```rust
+pub enum BuiltinTemplate { Ghostty, Alacritty, PosixShell, Powershell } // 清單見 §5.6
+impl BuiltinTemplate {
+    pub fn from_name(name: &str) -> Option<Self>;  // builtin: 之後的名稱
+    pub fn name(self) -> &'static str;
+    pub fn text(self) -> &'static str;
+}
+```
+
+內建資源有錯誤是程式的錯誤，不是使用者的錯誤。單元測試逐一確認內建資源載入時沒有任何診斷，所以執行時遇到這類錯誤會 panic。
+
+### 4.3 ConfigLoader
+
+**責任**：讀取本機設定、manifest、Profile 與使用者模組，合併內建宣告，建立 `EffectiveConfig`。保留每個值的位置，一個檔案有錯時繼續檢查其他檔案。
+
+**位置**：`layout` module 依 §5.1 決定三個目錄，`ConfigLoader` 使用它。
+
+```rust
+pub struct Layout { pub source: HomePath, pub config: HomePath, pub state: HomePath }
+impl Layout {
+    /// 設定目錄，依 XDG_CONFIG_HOME 或預設位置（§5.1）。
+    pub fn config_dir(host: &HostContext, diags: &mut Diagnostics) -> Checked<HomePath>;
+    /// 三個目錄，來源目錄依本機設定的 source。
+    pub fn new(host: &HostContext, local: &LocalSettings, diags: &mut Diagnostics) -> Checked<Layout>;
+    pub fn local_settings(&self) -> HomePath;   // <設定目錄>/local.toml
+    pub fn manifest(&self) -> HomePath;
+    pub fn profile(&self) -> HomePath;
+    pub fn modules(&self) -> HomePath;
+    pub fn state_file(&self) -> HomePath;
+    pub fn reserved(&self) -> Vec<Reserved>;    // §5.2 的保留位置
+}
+```
+
+**介面**：
+
+```rust
+pub struct ConfigLoader<'a> { fs: &'a dyn FileSystem, host: &'a HostContext }
+
+impl<'a> ConfigLoader<'a> {
+    pub fn new(fs: &'a dyn FileSystem, host: &'a HostContext) -> Self;
+
+    /// 讀取 <設定目錄>/local.toml。不存在時回傳空的本機設定。
+    pub fn load_local(&self, config_dir: &HomePath, diags: &mut Diagnostics)
+        -> Checked<LocalSettings>;
+
+    /// 讀取來源目錄。永遠回傳結果；有錯誤的部分不進入結果，記在 diags。
+    pub fn load(&self, layout: &Layout, diags: &mut Diagnostics) -> EffectiveConfig;
+}
+
+/// 解析 manifest 的文字，不經過檔案系統。ManifestService 用它確認修改後的內容。
+pub fn parse_manifest(text: &str, origin: &Origin, diags: &mut Diagnostics) -> Checked<Manifest>;
+```
+
+呼叫順序：`Layout::config_dir` → `load_local` → `Layout::new` → `load`。`layout` 在第 0 層，不能使用 `FileSystem`，所以 `Layout::new` 只做文字的處理；三個目錄是否互相包含要依 §6.2 的位置鍵判定，由初始化負責（§5.2、§4 後半）。
+
+**前置條件**：會寫入的子指令已取得鎖定（§6.7），讀到的檔案在指令結束前不會被其他 rosamta 程序改寫。預覽與查詢不取得鎖定，讀到的是當下的檔案。
+
+**後置條件**：
+
+- 讀取規則依 §5.3：UTF-8、略過 BOM、解析前把 CRLF 轉成 LF、不認得的鍵是錯誤並列出可用的鍵、名稱依 §5.3 的格式。
+- 每個檔案經由 `FileSystem` 讀取並記錄觀測。manifest 與本機設定的文字與觀測保存在 `LoadedFile`，供 `ManifestService` 與初始化修改時確認版本（§6.3）。
+- 本機設定不存在時為空；`profile.toml` 不存在時 `Profile` 為空；`modules/` 不存在時沒有使用者模組；`manifest.toml` 不存在是錯誤（§5.4）。
+- `modules/` 依 §5.5 遞迴讀取所有 `*.toml`，其他副檔名略過。檔案依路徑排序後讀取，但結果與順序無關：同一模組在兩個檔案宣告是錯誤，不由順序決定。
+- 內建輸出依 §5.4 與覆寫合併：以屬性為單位，`target` 的表格形式依平台合併；`removed = true` 的內建輸出不進入 `Manifest::get`，只列在 `removed_builtins`（§5.13）。
+- 語法錯誤時，該檔案只回報語法錯誤，整個檔案不進入結果。語法正確時，每個輸出表格、模組宣告與 Profile 條件分別檢查，一個表格的錯誤不影響其他表格。有錯誤的輸出不進入 `Manifest`，但 `is_declared` 仍認得它的名稱。
+- 有任何錯誤時 `is_complete()` 為 `false`。套用與查詢依此決定是否繼續（§4.6、§4.9）。
+- `target` 與 `source` 只檢查語法（`RawPath::parse`），三個平台的 `target` 都檢查。展開要用到目前主機的環境變數，由預檢處理（§4.6）。
+
+**FR-MAN-004 的第一處**：TOML 不允許重複的表格與鍵，toml_edit 在遇到第二處時回報語法錯誤。`ConfigLoader` 取出錯誤中的鍵名，把檔案截到第二處所在行之前再解析一次。截斷的部分在第一個錯誤之前，所以仍是合法的 TOML，從中可以找到第一處的位置。兩處都列在診斷中。第二處在同一行內（例如 inline table 中的重複鍵）時，兩處都指向這一行。
+
+**錯誤**：
+
+| 代碼 | 情況 |
+| --- | --- |
+| `config.read-failed` | 讀取失敗，附作業系統的錯誤；或檔案、路徑中有連結（§6.1） |
+| `config.not-utf8` | 無法以 UTF-8 解碼，指出所在的行 |
+| `config.syntax` | TOML 語法錯誤 |
+| `config.duplicate` | 重複的輸出、表格或鍵，列出每一處（FR-MAN-004） |
+| `config.unknown-key` | 不認得的鍵，列出該位置可用的鍵（FR-MAN-029） |
+| `config.invalid-value` | 型別錯誤、名稱格式不符、`permissions` 超出範圍、`target` 語法錯誤等 |
+| `config.missing-key` | 缺少必要的鍵，例如 `[outputs.*]` 沒有 `target`，欄位宣告沒有 `type` |
+| `config.source-choice` | `template` 與 `copy` 都有或都沒有 |
+| `config.unknown-builtin` | `[builtin.*]` 的名稱不是內建輸出，列出相近的名稱（§5.4） |
+| `config.builtin-name` | `[outputs.*]` 使用內建輸出的名稱，提示改用 `[builtin.*]` |
+| `config.removed-with-properties` | `removed = true` 的表格有其他屬性（§5.13） |
+| `config.duplicate-module` | 同一個模組在兩個檔案宣告，列出每一處（§5.5） |
+| `config.invalid-field-decl` | 欄位宣告不合理：`options` 為空或重複、`min` 大於 `max`、`min`/`max` 用在不適用的型別等 |
+| `config.missing-manifest` | 來源目錄沒有 `manifest.toml` |
+
+**隱藏的設計決定**：設定檔使用 TOML 與 toml_edit，其他 module 只看到 `RawValue`、`Located` 等本 module 的型別；BOM、換行與行號的對應；逐表格檢查的方式；找出重複的第一處的方法；內建資源的嵌入方式與合併演算法。
+
+### 4.4 ValueResolver
+
+**責任**：依四個覆寫層級決定每個欄位的值，保留值的來源，找出同一層級的重複設定（C2、FR-PRF-009–012）。
+
+**介面**：
+
+```rust
+pub struct ValueResolver;
+
+impl ValueResolver {
+    pub fn resolve(config: &EffectiveConfig, host: &HostContext, local: &LocalSettings,
+                   diags: &mut Diagnostics) -> ResolvedValues;
+}
+
+pub enum Layer { BuiltinDefault = 1, UserModule = 2, Profile = 3, Local = 4 }
+
+pub struct ValueSource {
+    pub layer: Layer,
+    pub at: SourceLocation,     // 內建預設值為 Origin::Builtin
+    pub rule: Option<usize>,    // Profile 層：是哪一個條件
+}
+
+pub struct Resolved {
+    pub value: Located<RawValue>,
+    pub source: ValueSource,
+    pub overridden: Vec<ValueSource>, // 被較高層級取代的較低層級設定，由高到低
+}
+
+pub struct ResolvedValues {
+    values: BTreeMap<FieldRef, Resolved>,
+    conflicted: BTreeSet<FieldRef>,   // 有同層重複的欄位
+}
+impl ResolvedValues {
+    pub fn get(&self, field: &FieldRef) -> Option<&Resolved>;
+    pub fn is_conflicted(&self, field: &FieldRef) -> bool;
+    pub fn iter(&self) -> impl Iterator<Item = (&FieldRef, &Resolved)>;
+}
+```
+
+C2 的 `values` 與 `provenance` 兩個 map 合併成一個：值與來源一定同時存在。
+
+**前置條件**：`config` 與 `local` 由 `ConfigLoader` 產生。`config` 不完整時仍可呼叫，結果只涵蓋讀到的部分。
+
+**後置條件**：
+
+- 層級 1 是內建模組欄位的 `default`；層級 2 是 `config.assignments`；層級 3 是 `matches` 成立的條件中的 `values`；層級 4 是 `local.values`。
+- 每個欄位取有設定的最高層級。較高層級取代整個值，清單與對照表不合併：FR-PRF-010 以欄位為單位，合併清單需要另外定義刪除元素的寫法。
+- 同一層級有兩個以上的設定時回報錯誤，列出每一處的檔案與行（FR-PRF-012）。該欄位記為 `conflicted`，不取這一層的值；`PreflightChecker` 因此不會再為它回報「缺少必填值」。
+- 結果與檔名、模組名稱及條件的順序無關（FR-PRF-011）：同層重複是錯誤，不需要決定勝負。
+- 引用未宣告的模組或欄位的設定也照樣解析，由 `PreflightChecker` 回報，這樣錯誤訊息可以列出名稱相近的欄位。
+- 不檢查值的型別。未設定任何值的欄位不在結果中。
+
+**錯誤**：`values.duplicate`（同層重複，FR-PRF-012）。
+
+**隱藏的設計決定**：層級的順序與「整個值取代」的規則。
+
+### 4.5 範本與原樣複製
+
+`template` module 讀取範本與原樣複製的來源、編譯範本、取得欄位引用並渲染。MiniJinja 只出現在這個 module 內。
+
+**介面**：
+
+```rust
+pub struct TemplateEngine { /* MiniJinja 的 Environment */ }
+
+impl TemplateEngine {
+    pub fn new() -> Self;
+    pub fn compile(&self, text: TemplateText, diags: &mut Diagnostics) -> Checked<CompiledTemplate>;
+    /// 範本的全域名稱：host 與註冊的函式（§5.5 的模組名稱限制）。
+    pub fn global_names() -> &'static [&'static str];
+}
+
+pub struct TemplateText { pub origin: Origin, pub text: String, pub observation: Option<Observation> }
+
+pub struct CompiledTemplate { /* 中繼資料、引用、編譯結果 */ }
+
+impl CompiledTemplate {
+    pub fn meta(&self) -> &TemplateMeta;
+    pub fn references(&self) -> &References;
+    /// 引用了 modules 中不存在的模組、欄位或 host 屬性，附上所在的行（USE-003）。
+    pub fn unknown_references(&self, modules: &ModuleSet) -> Vec<UnknownReference>;
+    pub fn render(&self, values: &TemplateValues, diags: &mut Diagnostics) -> Checked<Vec<u8>>;
+}
+
+pub struct TemplateMeta {                    // §5.9
+    pub program: Option<String>,             // C1 的 targetProgram
+    pub format_version: Option<String>,      // C1 的 targetFormatVersion
+    pub requires: BTreeMap<ModuleName, Located<Vec<u32>>>,
+}
+
+pub struct References {
+    pub fields: BTreeSet<FieldRef>,          // theme.foreground 這類引用
+    pub whole_modules: BTreeSet<ModuleName>, // 只出現模組名稱的引用（§2.3）
+}
+impl References {
+    pub fn mentions_module(&self, m: &ModuleName) -> bool; // 有該模組的欄位，或整個模組
+    pub fn mentions_field(&self, f: &FieldRef) -> bool;    // 有該欄位，或整個模組
+}
+
+/// 交給範本的值：每個模組的每個宣告欄位都有一項，選填欄位沒有值時為 None；
+/// 另有 host 的作業系統、主機名稱與本機標籤。
+pub struct TemplateValues { /* 模組 → 欄位 → Option<FieldValue>，以及 host */ }
+
+pub struct SourceLoader<'a> { fs: &'a dyn FileSystem, layout: &'a Layout, engine: &'a TemplateEngine }
+
+impl<'a> SourceLoader<'a> {
+    pub fn new(fs: &'a dyn FileSystem, layout: &'a Layout, engine: &'a TemplateEngine) -> Self;
+    /// 讀取並編譯範本，或讀取原樣複製的來源檔。
+    pub fn load(&self, output: &OutputDefinition, diags: &mut Diagnostics) -> Checked<LoadedSource>;
+    /// 只取得引用。原樣複製不開啟來源檔（04 A9），直接回傳空的引用。
+    pub fn references(&self, output: &OutputDefinition, diags: &mut Diagnostics) -> Checked<References>;
+}
+
+pub enum LoadedSource {
+    Template(CompiledTemplate),
+    Verbatim { bytes: Vec<u8>, observation: Observation },
+}
+```
+
+**前置條件**：`render` 的 `values` 已通過 `check_inputs`。`TemplateValues` 的建構函式是 `pub(crate)`，core 中只有 `check_inputs` 呼叫它，§11 逐一核對；core 以外的程式無法建立它。
+
+**後置條件**：
+
+- `TemplateEngine::new` 從 `Environment::empty()` 開始，未定義的值為 `Strict`，不做 HTML 跳脫，保留結尾換行，只註冊下表的名稱（§2.3）。
+- 渲染的變數：每個模組一個同名變數，值是它的欄位；另有 `host`。選填欄位沒有值時是 `none`（DATA-004）。
+- `render` 的結果是渲染出的 UTF-8 位元組，不做其他轉換。原樣複製的 `bytes` 是來源檔的位元組（FR-TPL-006）。
+- 範本與原樣複製的來源都從來源目錄的 handle 走訪讀取（§6.1）；`builtin:` 範本取自 `BuiltinTemplate::text`，不讀檔案。
+- 引用依 §2.3 從 `undeclared_variables(true)` 取得：去掉全域名稱後，第一段是模組；有第二段時記為欄位引用，更深的部分（例如 `shellrc.env.EDITOR` 的 `EDITOR`）不再細分；只有第一段時記為整個模組。
+
+範本可用的名稱。這是範本語言的公開介面，同一個 major 版本內只增不減，每一個都有回歸測試（MNT-001）：
+
+| 名稱 | 種類 | 說明 |
+| --- | --- | --- |
+| `host.os` | 變數 | `"linux"`、`"macos"` 或 `"windows"` |
+| `host.hostname` | 變數 | 主機名稱（IF-011） |
+| `host.tags` | 變數 | 本機設定的標籤，依名稱排序 |
+| `rgb(color)` | 函式 | 色碼的 R、G、B，0–255 的整數清單（FR-TPL-007） |
+| `rgb_unit(color)` | 函式 | 色碼的 R、G、B，0–1 的小數清單（FR-TPL-008） |
+| `none` | 測試 | 選填欄位沒有值（§2.3） |
+| `lower`、`upper` | 過濾器 | 轉成小寫、大寫 |
+| `replace(old, new)` | 過濾器 | 取代所有出現處 |
+| `split(sep)`、`join(sep)` | 過濾器 | 切開字串、以分隔字串連接清單 |
+| `items` | 過濾器 | 對照表轉成依名稱排序的（名稱，值）清單 |
+| `length` | 過濾器 | 字串、清單或對照表的長度 |
+| `tojson` | 過濾器 | JSON 表示。控制字元（含 U+007F）一律寫成 `\uXXXX`，字串的結果因此也是合法的 TOML 字串 |
+| `sh_quote` | 過濾器 | POSIX shell 的單引號寫法 |
+| `ps_quote` | 過濾器 | PowerShell 的單引號寫法 |
+
+`host` 不提供 home 與環境變數：範本的輸出依主機改變的部分越少，預覽越容易預期；需要時可在之後的 minor 版本加入，不破壞相容性。
+
+**`include` 不開放**：第一版的範本不能載入其他範本。`include`、`import`、`from` 與 `extends` 經由 loader 時一律失敗，訊息說明第一版不支援，並提示把共用的內容寫進同一個範本。理由：
+
+- 開放後，引用分析要自行展開被載入的範本（§2.3）。範本名稱可以是變數，無法靜態展開，FR-QRY-004 就無法保證。
+- 內建範本彼此獨立，不需要共用片段；使用者的範本可以用 `{% macro %}` 在同一個檔案中重複使用。
+- 之後加入 `include` 不影響既有的範本。
+
+loader 在渲染時才被呼叫，所以本次沒有執行到的分支中的 `include` 不會被發現，到了會執行的主機才回報。
+
+**USE-003 的位置與提示**：
+
+- 編譯與渲染的錯誤取 MiniJinja 錯誤中的範本名稱、行號與原因，範本名稱換成 `Origin`。
+- 字串沒有結束時，MiniJinja 的錯誤指向檔案結尾（§2.3）。錯誤是語法錯誤、且行號是最後一行時，rosamta 掃描 `{{ }}` 與 `{% %}` 中的引號，找到沒有結束的字串，補上它開始的行號。
+- `unknown_references` 的結果沒有位置（§2.3）。rosamta 在範本的 `{{ }}` 與 `{% %}` 中搜尋這個路徑的寫法，例如 `theme.forground` 或中間有空白的 `theme . forground`，列出每一個出現的行。找不到時只列範本路徑。不使用 MiniJinja `unstable_machinery` 的語法樹：它的 span 不是穩定的 API。
+- 提示依錯誤種類產生：不存在的欄位或模組，列出編輯距離 2 以內的名稱，沒有時列出該模組的所有欄位；語法錯誤，依 MiniJinja 的錯誤種類給固定的提示，例如補上對應的 `{% endif %}`；未註冊的函式、過濾器或測試，列出上表中名稱相近的項目。
+
+**錯誤**：
+
+| 代碼 | 情況 |
+| --- | --- |
+| `template.read-failed` | 讀取來源失敗、來源不是一般檔案，或路徑中有連結（§6.1、A9） |
+| `template.not-utf8` | 範本不是 UTF-8。原樣複製沒有這項限制 |
+| `template.meta` | 中繼資料的 TOML 有錯，行號對應範本的實際行 |
+| `template.syntax` | 範本語法錯誤 |
+| `template.render` | 渲染時的錯誤，例如未定義的值、`rgb` 收到不是色碼的字串 |
+| `template.include` | 使用了 `include`、`import`、`from` 或 `extends` |
+| `template.unknown-reference` | 引用了不存在的模組、欄位或 `host` 屬性（由 `PreflightChecker` 依 `unknown_references` 回報） |
+
+**隱藏的設計決定**：範本引擎是 MiniJinja 與它的設定；引用的取得方式與路徑的切法；錯誤位置的補充方式；`include` 的處理。換掉範本引擎時，只要保留上表的名稱與語法，其他 module 不受影響。
+
+### 4.6 PreflightChecker
+
+**責任**：寫入前檢查整批輸入與計畫，收集所有不通過的檢查（FR-PLN-007、USE-004）。只檢查，不寫入，也不決定 exit code。
+
+**介面**：
+
+```rust
+pub struct AnalysisContext<'a> {
+    pub host: &'a HostContext,
+    pub layout: &'a Layout,
+    pub local: &'a LocalSettings,
+    pub config: &'a EffectiveConfig,
+    pub values: &'a ResolvedValues,
+    pub enabled: &'a EnabledOutputs,
+    pub sources: &'a BTreeMap<OutputName, LoadedSource>, // 啟用輸出中成功載入的來源
+    pub state: &'a StateLoadResult,
+}
+
+pub struct PreflightChecker;
+
+impl PreflightChecker {
+    /// 第一階段：不需要觀測目標的檢查。全部通過時回傳交給範本的值。
+    pub fn check_inputs(ctx: &AnalysisContext, diags: &mut Diagnostics) -> Checked<TemplateValues>;
+    /// 第二階段：目標路徑的碰撞與保留位置。
+    pub fn check_targets(ctx: &AnalysisContext, targets: &TargetSet, diags: &mut Diagnostics) -> Checked<()>;
+    /// 第三階段：依計畫中觀測到的目標與來源。
+    pub fn check_plan(ctx: &AnalysisContext, plan: &ApplyPlan, diags: &mut Diagnostics) -> Checked<()>;
+}
+```
+
+`TargetSet` 與 `ApplyPlan` 由 `Planner` 產生（§4 後半）。`TargetSet` 是每個啟用輸出在目前平台的目標，包含正規化後的路徑、位置鍵（§6.2）與 `target` 的宣告位置，以及保留位置的位置鍵；它不需要渲染，欄位值有錯時也能建立。
+
+**前置條件**：每個階段的輸入都已產生。`ApplyService` 依序呼叫：`check_inputs` 與 `check_targets` 都會執行，不因前者失敗而略過；兩者都通過才渲染並建立計畫，再呼叫 `check_plan`。如此 USE-004 的三種錯誤（欄位值、目標碰撞、manifest 屬性）會在同一次回報（§4 後半的 `ApplyService`）。
+
+**後置條件**：每個階段都執行該階段的所有檢查，不在第一個錯誤停止。已經由前面的步驟回報的問題不重複回報，例如 `ConfigLoader` 回報過的檔案，或 `conflicted` 的欄位。
+
+| 階段 | 檢查 | 需求 | 代碼 |
+| --- | --- | --- | --- |
+| 輸入 | 狀態檔損毀或由較新的版本寫入（§5.10） | REL-004 | `preflight.state` |
+| 輸入 | 使用者模組的名稱與內建模組或範本的全域名稱相同（§5.5） | FR-MOD-004 | `preflight.module-name` |
+| 輸入 | 設定值引用未宣告的模組或欄位，列出相近的名稱（§5.5） | FR-PLN-008 | `preflight.unknown-field` |
+| 輸入 | 每一個設定值都符合欄位的型別、範圍與格式，包括不成立的 Profile 條件中的值 | FR-PLN-008、DATA-001 | `preflight.invalid-value` |
+| 輸入 | 必填欄位有最終值；缺少時指出欄位宣告所在的檔案（04 §2） | FR-PLN-008 | `preflight.missing-value` |
+| 輸入 | Profile 的 `enable` 列出不存在的輸出（警告，§5.7） | — | `preflight.unknown-output` |
+| 輸入 | 啟用的輸出有目前平台的 `target` | FR-MAN-008 | `preflight.no-target` |
+| 輸入 | 啟用輸出的 `target` 能展開，結果在 home 內（§6.1） | FR-MAN-009、FR-MAN-010 | `preflight.target-path` |
+| 輸入 | 啟用輸出的來源都已載入、編譯。錯誤由 `SourceLoader::load` 回報（§4.5），這裡只確認每個啟用輸出都在 `sources` 中 | FR-PLN-007、USE-003 | `template.*` |
+| 輸入 | 範本的 `requires` 與模組的格式版本相容（§5.9） | FR-TPL-005 | `preflight.incompatible-template` |
+| 輸入 | 範本沒有引用不存在的模組、欄位或 `host` 屬性，包括不會執行的分支（§2.3） | USE-003 | `template.unknown-reference` |
+| 目標 | 兩個輸出的位置鍵相同，或一個是另一個的前段，列出每個輸出的名稱與 `target` 的位置 | FR-PLN-009、FR-PLN-010 | `preflight.collision` |
+| 目標 | 目標位於保留位置、是保留目錄的上層，或檔名含 `.rosamta-tmp.`（§5.2） | FR-PLN-007、DATA-005 | `preflight.reserved` |
+| 目標 | 目標的某一層上層目錄是連結（§6.1） | DC-002、SEC-002 | `preflight.linked-parent` |
+| 計畫 | 必須操作的目標或來源的類型不受支援（04 §3.1） | FR-PLN-007、DC-003 | `preflight.unsupported-type` |
+| 計畫 | 要接管的連結與狀態目錄不在同一個檔案系統（§6.5） | SEC-002 | `preflight.backup-device` |
+
+嚴格模式的 drift 衝突不屬於預檢，由 `ApplyService` 的模式檢查處理（04 §2、§4 後半）。
+
+`check_inputs` 檢查所有層級的值，而不只是最終值：值的型別與主機無關，在一台主機上被覆寫的錯誤值，到了另一台主機仍會出錯，因此在每台主機都回報。必填的檢查只看最終值。
+
+**錯誤**：上表的代碼。`check_inputs` 有任何錯誤時回傳 `Err`，否則回傳 `TemplateValues`；其他兩個階段同樣以 `Checked<()>` 表示是否通過。
+
+**隱藏的設計決定**：檢查的順序與分組；名稱相近的判定方式（編輯距離）；如何避免重複回報。
+
+### 4.7 TomlEditor
+
+**責任**：以保留格式的方式修改 TOML 設定檔（FR-MAN-030），供 `ManifestService` 與初始化使用。只處理文字，不讀寫檔案，也不知道設定的意義。
+
+**介面**（`docedit`）：
+
+```rust
+pub struct TomlEditor { /* toml_edit 的文件、換行方式、是否有 BOM */ }
+
+pub enum EditValue { String(String), Bool(bool), Strings(Vec<String>) }
+
+impl TomlEditor {
+    /// 混用 LF 與 CRLF 時拒絕（§5.3）。
+    pub fn parse(text: &str, origin: &Origin, diags: &mut Diagnostics) -> Checked<Self>;
+    pub fn get(&self, path: &[&str]) -> Option<EditValue>;
+    pub fn has_table(&self, path: &[&str]) -> bool;
+    /// 設定值；表格不存在時建立。
+    pub fn set(&mut self, path: &[&str], value: EditValue);
+    pub fn remove(&mut self, path: &[&str]) -> bool;
+    /// 移除整個表格，連同緊接在上方的註解（§5.3）。
+    pub fn remove_table(&mut self, path: &[&str]) -> bool;
+    /// 還原換行方式與 BOM 後的完整文字。
+    pub fn to_text(&self) -> String;
+}
+```
+
+`path` 是鍵的序列，例如 `["outputs", "nvim", "target", "linux"]`。
+
+**後置條件**：§5.3 的編輯規則全部在這裡實作：修改值時沿用原值的 decor；修改 inline table 中的鍵時維持 inline table；CRLF 的檔案先轉成 LF 再轉回；保留 BOM；新增的鍵沿用同一表格最後一個鍵的縮排；新增的表格加在檔案結尾，前面空一行；移除表格時一併移除上方的註解。`to_text` 與原文相比，只有被修改的鍵、表格所在的行不同。pilot P4 的案例改寫成這個型別的單元測試。
+
+**錯誤**：`docedit.mixed-line-endings`（混用換行，指出第一個不同的行）；`config.syntax`（無法解析）。
+
+**隱藏的設計決定**：toml_edit 的 decor 與表格位置的處理，以及 §5.3 第 3、4 點的換行與縮排規則。
+
+### 4.8 ManifestService
+
+**責任**：納入管理、修改輸出屬性、停止管理（FR-MAN-023–025），只修改這次操作涉及的部分（FR-MAN-030）。不改動任何目標檔。
+
+**介面**（`manage`）：
+
+```rust
+pub struct ManifestService<'a> {
+    fs: &'a dyn FileSystem, host: &'a HostContext, layout: &'a Layout,
+    state: &'a StateStore<'a>, sync: &'a dyn SyncHook,
+}
+
+impl<'a> ManifestService<'a> {
+    pub fn new(fs: &'a dyn FileSystem, host: &'a HostContext, layout: &'a Layout,
+               state: &'a StateStore<'a>, sync: &'a dyn SyncHook) -> Self;
+    pub fn add(&self, lock: &WriteLock, req: AddRequest, diags: &mut Diagnostics)
+        -> Checked<OperationResult>;
+    pub fn update(&self, lock: &WriteLock, name: &OutputName, patch: OutputPropertyPatch,
+                  diags: &mut Diagnostics) -> Checked<OperationResult>;
+    pub fn forget(&self, lock: &WriteLock, name: &OutputName, diags: &mut Diagnostics)
+        -> Checked<OperationResult>;
+}
+
+pub struct AddRequest {
+    pub target: PathBuf,            // 絕對路徑；相對路徑由執行檔依工作目錄轉換
+    pub name: Option<OutputName>,   // 未指定時由檔名產生
+}
+
+pub enum PatchValue<T> { Keep, Set(T), Reset }   // Reset：使用者輸出移除該鍵；內建輸出回到內建值
+
+pub struct OutputPropertyPatch {
+    pub source: PatchValue<SourceSpec>,
+    pub target: Vec<(Option<Platform>, PatchValue<RawPath>)>, // None 表示三個平台
+    pub ownership: PatchValue<Ownership>,
+    pub permissions: PatchValue<Permissions>,
+    pub takeover: PatchValue<bool>,
+}
+
+pub struct OperationResult {
+    pub output: OutputName,
+    pub changes: Vec<FileChange>,   // 建立或修改的檔案，例如來源副本、manifest、狀態檔
+    pub unchanged: bool,            // 指定的值與現況相同，沒有寫入
+}
+```
+
+**共同的前置條件**：已取得鎖定。manifest 能完整載入，沒有任何錯誤：toml_edit 無法編輯有語法錯誤的檔案，而在有錯的 manifest 上修改，結果是否正確也無法確認。其他設定檔的錯誤不影響管理指令。
+
+**共同的後置條件**：
+
+- manifest 經由 `TomlEditor` 修改，再以 `parse_manifest` 解析修改後的文字；有錯誤時不寫入。這樣指令不會寫出自己無法讀取的 manifest。
+- manifest 依 §6.3 以「取代」寫入，被取代的必須是載入時的版本；使用者在指令執行期間修改了 manifest 時，指令失敗，保留使用者的版本。
+- 不改動任何目標檔。
+
+**add**（FR-MAN-023）：
+
+1. 依 §6.1 把 `target` 轉成 `HomePath`。它必須在 home 內、不在保留位置（§5.2），而且是一般檔案，路徑中沒有連結。
+2. 任何有效輸出（包括內建輸出）在目前平台的目標與它的位置鍵相同時失敗，回報該輸出的名稱。
+3. 名稱：使用 `req.name`；未指定時取檔名，去掉開頭的 `.`，把不符合輸出名稱格式的字元換成 `-`，合併連續的 `-` 並去掉頭尾的 `-`，例如 `.gitconfig` 為 `gitconfig`、`init.lua` 為 `init-lua`；結果為空時用 `file`。名稱已被使用者輸出、內建輸出或已移除的內建輸出使用時，產生的名稱依序加上 `-2`、`-3`，到 `-99` 仍被占用就失敗；指定的名稱被占用時直接失敗。
+4. 經由 `FileSystem` 讀取目標的內容並記錄觀測，依 §5.4 在 `files/` 下以「建立」寫入副本，需要時建立上層目錄。預定位置被占用時，包括在最後一次確認後才被占用，改用下一個名稱（§6.3）。
+5. 在 manifest 結尾新增 `[outputs.<名稱>]`，寫入 `copy` 與目前平台的 `target.<平台>`，路徑以 `~/` 開頭、以 `/` 分隔。只寫目前平台：檔案只在這個平台確認過，其他平台的路徑可能不同；在其他平台啟用時，FR-MAN-008 會指出缺少的目標路徑。
+6. 取代 manifest。失敗時依 §6.3 刪除本次建立的副本。
+
+結果列出副本與 manifest。輸出不會自動啟用，回報提示在 Profile 中啟用；啟用後，目標與副本相同，依 FR-MAN-021 直接納管，動作為「不變」。
+
+**update**（FR-MAN-024）：
+
+1. 使用者輸出修改 `[outputs.<名稱>]`；未移除的內建輸出修改或新增 `[builtin.<名稱>]`，只寫入這次指定的屬性。已移除的內建輸出、不存在的輸出都失敗，後者列出相近的名稱。
+2. 新的值依 §5.4 檢查：`permissions` 的範圍、`target` 與來源路徑的語法。
+3. 設定 `source` 時，寫入 `template` 或 `copy`，並移除同一表格中的另一個。
+4. 設定所有平台的 `target` 時寫成字串；設定單一平台時寫成 `target.<平台>`。原本是字串形式而只改一個平台時，改寫成表格形式，其他兩個平台沿用原字串，三個平台的結果才與修改前一致（只有指定的平台改變）。
+5. `Reset`：使用者輸出移除該鍵，回到 §5.4 的預設值；內建輸出移除覆寫中的該鍵，回到內建宣告。`[builtin.*]` 因此變空時，移除整個表格。使用者輸出不能 `Reset` 必要的 `target` 與來源。
+6. 修改後的文字與原文相同時不寫入，`unchanged` 為 `true`。
+
+**forget**（FR-MAN-025）依 §5.13 的三個步驟：
+
+1. 載入狀態檔。損毀時失敗，不改動任何檔案（REL-004）。找出名稱相同的所有紀錄：同一個輸出可能有兩筆紀錄（§5.10）。
+2. 有紀錄、而且有任何一筆沒有 `forget_pending` 時，全部加上 `forget_pending`，提交狀態檔。
+3. 輸出仍在 manifest 中時：使用者輸出移除 `[outputs.<名稱>]` 與上方的註解；內建輸出把 `[builtin.<名稱>]` 改成只有 `removed = true`，原有的其他屬性一併移除。取代 manifest。
+4. 有紀錄時，刪除這些紀錄，提交狀態檔。
+
+輸出不在 manifest 中，但有帶 `forget_pending` 的紀錄時，表示上次在第 3 步之後中止，只執行第 4 步。輸出不在 manifest 中也沒有紀錄時失敗。狀態檔的寫入依 `StateStore` 的提交規則（§4 後半），被取代的必須是第 1 步載入的版本。
+
+**錯誤**：
+
+| 代碼 | 情況 |
+| --- | --- |
+| `manage.manifest-invalid` | manifest 有錯誤，附上載入時的診斷 |
+| `manage.not-in-home`、`manage.reserved` | 納入的路徑不在 home 內，或位於保留位置 |
+| `manage.not-regular-file` | 納入的路徑不存在、不是一般檔案，或路徑中有連結 |
+| `manage.already-managed` | 已有輸出以這個路徑為目標 |
+| `manage.name-taken` | 指定的名稱已被使用，或產生的名稱到 `-99` 仍被占用 |
+| `manage.copy-location` | 來源副本的名稱到 `-99` 仍被占用 |
+| `manage.unknown-output` | 沒有這個輸出，列出相近的名稱 |
+| `manage.builtin-removed` | 修改已移除的內建輸出，提示先刪除 `[builtin.*]` 表格 |
+| `manage.invalid-patch` | 修改的值不合法，或 `Reset` 必要的屬性 |
+| `manage.concurrent-edit` | manifest 或狀態檔在指令執行期間被修改 |
+| `manage.write-failed` | 寫入失敗，附作業系統的錯誤；說明已建立的副本是否已刪除 |
+| `docedit.mixed-line-endings`、`preflight.state` | 見 §4.7、§4.6 |
+
+**隱藏的設計決定**：輸出名稱與來源副本名稱的產生規則；寫入的順序與失敗時的處理；停止管理的三個步驟。
+
+### 4.9 QueryService
+
+**責任**：唯讀的查詢：列出輸出（FR-MAN-026）、依模組或欄位找出引用的輸出（FR-QRY-001、FR-QRY-002、FR-QRY-004）、說明輸出的來源與引用（FR-QRY-003），以及欄位的最終值與來源（FR-PRF-013）。不寫入任何檔案（FR-QRY-006）。
+
+**介面**（`query`）：
+
+```rust
+pub struct QueryService<'a> {
+    fs: &'a dyn FileSystem, host: &'a HostContext, layout: &'a Layout,
+    config: &'a EffectiveConfig, local: &'a LocalSettings,
+    values: &'a ResolvedValues, sources: &'a SourceLoader<'a>,
+}
+
+impl<'a> QueryService<'a> {
+    pub fn new(/* 同上的欄位 */) -> Self;
+    pub fn list_outputs(&self, diags: &mut Diagnostics) -> Vec<OutputListing>;
+    pub fn find_outputs(&self, query: &RefQuery, diags: &mut Diagnostics) -> Checked<FindResult>;
+    pub fn describe_output(&self, key: &OutputKey, diags: &mut Diagnostics) -> Checked<Vec<OutputDescription>>;
+    pub fn describe_value(&self, field: &FieldRef, diags: &mut Diagnostics) -> Checked<ResolvedValueDescription>;
+}
+
+pub enum RefQuery { Module(ModuleName), Field(FieldRef) }
+pub enum OutputKey { Name(OutputName), Path(PathBuf) } // Path 為絕對路徑
+
+pub struct OutputSummary {
+    pub name: OutputName,
+    pub target: TargetDisplay,  // 目前平台展開後的路徑；沒有目前平台的 target，或無法展開時說明原因
+    pub enabled: bool,
+}
+
+pub struct OutputListing {
+    pub summary: OutputSummary,
+    pub kind: ListingKind,               // 使用者、內建、覆寫過的內建、已移除的內建
+    pub source: Option<SourceSpec>,      // 已移除的內建輸出為 None
+    pub ownership: Option<Ownership>,
+    pub permissions: Option<Permissions>,
+    pub takeover: Option<bool>,
+    pub enabled_by: Vec<SourceLocation>, // 啟用它的條件
+}
+
+pub struct FindResult {
+    pub outputs: Vec<OutputSummary>,      // 引用該模組或欄位的輸出
+    pub undetermined: Vec<OutputSummary>, // 無法讀取或編譯範本，無法判定的輸出
+}
+
+pub struct OutputDescription {
+    pub summary: OutputSummary,
+    pub source: SourceSpec,
+    pub references: References,           // 原樣複製為空
+}
+
+pub struct ResolvedValueDescription {
+    pub field: FieldRef,
+    pub declared_at: SourceLocation,
+    pub value: Option<Located<RawValue>>, // 選填欄位在四個層級都沒有值時為 None
+    pub source: Option<ValueSource>,
+    pub overridden: Vec<ValueSource>,
+}
+```
+
+**前置條件**：`config.is_complete()` 為 `true`；否則執行檔不建立 `QueryService`，只回報載入的錯誤，回傳 `1`。設定不完整時，查詢結果可能漏掉輸出或值的來源，FR-QRY-004 不允許這種結果被當成完整的答案。不取得鎖定（§6.7）。
+
+**後置條件**：
+
+- `list_outputs` 列出所有有效輸出與已移除的內建輸出，依名稱排序；未啟用的輸出也列出（FR-MAN-026）。
+- `find_outputs` 對有效 manifest 中的**每一個**輸出取得引用，不論是否啟用、是否有目前平台的目標（FR-QRY-004）。原樣複製不開啟來源檔。範本無法讀取或編譯時，該輸出列在 `undetermined`，並回報錯誤，結果不會被當成完整的答案。模組或欄位沒有宣告時失敗。
+- `describe_output` 以名稱查詢時回傳一項。以路徑查詢時，把路徑依 §6.1 轉成 home 內的路徑，再依 §6.2 的位置鍵與每個輸出在目前平台的目標比較，列出所有相符的輸出（碰撞時可能不只一個）；沒有相符的輸出時失敗。比較時走訪目錄但不開啟檔案。
+- `describe_value` 回傳 `ValueResolver` 的結果與欄位宣告的位置。欄位在同一層級重複時，回報 `values.duplicate` 的錯誤，不給最終值。
+- 所有方法只使用 `FileSystem` 的讀取與列出目錄，不清理殘留檔案（§6.5）。
+
+**錯誤**：`query.unknown-module`、`query.unknown-field`、`query.unknown-output`（列出相近的名稱）、`query.no-match`（沒有輸出以該路徑為目標）、`query.path`（路徑不在 home 內或無法轉換），以及 §4.5 的 `template.*`。
+
+**隱藏的設計決定**：路徑查詢的比對方式；引用無法判定時的處理。
 
 ## 5. 資料與檔案格式
 
@@ -385,7 +1220,7 @@ options = ["plain", "powerline"]
 width = 40
 ```
 
-`[modules.<模組>]` 的 `version` 是模組格式版本，供範本宣告相容版本（FR-TPL-004、§5.9）；未寫時沒有版本，宣告了相容版本的範本引用這個模組時，預檢失敗。模組名稱不得與內建模組相同，也不得與範本的全域名稱相同（`host` 與 §4 註冊的函式）。
+`[modules.<模組>]` 的 `version` 是模組格式版本，供範本宣告相容版本（FR-TPL-004、§5.9）；未寫時沒有版本，宣告了相容版本的範本引用這個模組時，預檢失敗。模組名稱不得與內建模組相同，也不得與範本的全域名稱相同（`host` 與 §4.5 註冊的函式）。
 
 欄位宣告的鍵：
 
