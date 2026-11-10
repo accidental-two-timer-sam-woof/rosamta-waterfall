@@ -188,7 +188,7 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | 0 基礎 | `diag` | `Diagnostics` | 診斷與來源位置（檔案、行、欄），所有 module 共用 | — |
 | 0 | `host` | `HostContext`、`Platform` | 主機資訊與環境變數的快照 | `diag` |
 | 0 | `path` | 目標路徑的型別 | `~` 與環境變數的展開、home 內的相對路徑、路徑比較（§6） | `diag`、`host` |
-| 0 | `fs` | `FileSystem`、`FileInspection` | trait，以及它使用的檔案身分、類型、內容指紋與目錄 handle；同步點與 `SyncHook` trait（§8.2） | `diag`、`path` |
+| 0 | `fs` | `FileSystem`、`FileInspection` | trait，以及它使用的檔案身分、類型、內容指紋與目錄 handle；鎖定 `WriteLock`；同步點與 `SyncHook` trait（§8.2） | `diag`、`path` |
 | 0 | `layout` | `Layout` | 程式使用的位置（§5.1）與保留位置（§5.2） | `diag`、`host`、`path` |
 | 1 資料 | `config` | `ConfigLoader`、`EffectiveConfig`、`Manifest`、`OutputDefinition`、`ModuleDecl`、`FieldDecl`、`Assignment`、`Profile`、`ProfileRule`、`LocalSettings`、`TemplateRef` | 讀取四種設定檔與內建資源，合併內建輸出與覆寫（§5.3–§5.9） | 第 0 層 |
 | 1 | `docedit` | `TomlEditor` | 保留格式的 TOML 編輯（§5.3） | `diag` |
@@ -228,7 +228,7 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 
 ## 4. 類別詳細規格
 
-本節把 03 C1–C4 的類別細化成 Rust 的公開介面。每個類別寫出責任、介面、前置與後置條件、錯誤，以及它對其他 module 隱藏的設計決定：這些決定改變時，只需要修改該 module。§4.1–§4.9 是設定、範本、管理與查詢；規劃、執行、回復、狀態、檔案系統與初始化在 §4.10 之後。詳細類別圖見 [uml.md](uml.md) 的 D1–D4。
+本節把 03 C1–C4 的類別細化成 Rust 的公開介面。每個類別寫出責任、介面、前置與後置條件、錯誤，以及它對其他 module 隱藏的設計決定：這些決定改變時，只需要修改該 module。§4.1–§4.9 是設定、範本、管理與查詢；§4.10–§4.16 是檔案系統、狀態、規劃、回復、執行、套用與初始化。詳細類別圖見 [uml.md](uml.md) 的 D1–D7。
 
 介面以 Rust 簽名表示，省略 derive、私有欄位與 `pub(crate)` 的項目。生命週期 `'a` 表示服務借用呼叫端建立的依賴（§8.1）。實作時可以調整名稱，但型別表達的限制必須保留，例如「先取得鎖定才能修改設定檔」。
 
@@ -245,6 +245,14 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | C4 `QueryService` | 加上 `list_outputs` | FR-MAN-026 的列出輸出是唯讀的，與其他查詢共用 Profile 判定 |
 | C4 管理方法的參數 | 加上 `&WriteLock`；`add` 改收 `AddRequest` | 以型別確保修改前已取得鎖定（§6.7）；納入時可以指定輸出名稱 |
 | C4 回傳 `Diagnostics` | 以 `&mut Diagnostics` 收集（§4.1） | 錯誤與警告走同一條路，USE-004 才能一次列出全部 |
+| C3 `PlanItem` 的字串成員 | enum，加上觀測、期望內容與紀錄的變更（§4.12） | 執行時依觀測核對，以期望內容寫入；03 C3 末段要求補齊這個傳遞契約 |
+| C3 `ApplyReport.exitCode` | `outcome()`，exit code 由 §9 對應 | core 不決定 exit code，與 §4.1 一致 |
+| C4 `Planner.build(config, values, state)` | `targets` 與 `plan` | 目標碰撞須在渲染前檢查（§4.6） |
+| C4 `FileSystem` 的 `inspect`、`backup`、`applyAtomically` | `inspect` 與三次呼叫的綁定操作 `prepare`、`execute`、`confirm` | 同步點須落在核對與系統呼叫之間（§8.2）；備份與快照也是綁定的操作 |
+| C4 `RecoveryManager` 的 `begin()`、`capture(path)`、`commit()` | `begin` 接收狀態的基準，`capture` 接收觀測，`commit` 改名為 `finish`；加上 `record`、`temp_name`、`clean_stale` | 快照要依觀測核對（A16）；回復要知道本批做過的每個操作 |
+| C4 `StateStore.saveAtomically(state)` | `commit(lock, base, new, temp)` | 被取代的必須是載入的版本（A23） |
+| C4 `ApplyService.run(request)`、`Executor.execute(plan)` | `preview` 與 `apply`；`execute` 只接收 `ApprovedPlan` | 預覽沒有鎖定，也就無法寫入；以型別確保只執行通過檢查的計畫 |
+| C4 `GitClient.cloneToStaging(url)` | `clone_into(url, dest)` | 暫存目錄由 `FileSystem` 建立，才能核對身分（§6.3） |
 
 ### 4.1 共通約定
 
@@ -329,6 +337,11 @@ pub struct SourceRelPath { /* 元件的序列，至少一個 */ }
 impl SourceRelPath {
     pub fn parse(text: &str) -> Result<SourceRelPath, PathSyntaxError>;
 }
+
+impl HomePath {
+    /// 命令列給的絕對路徑，例如納入管理的檔案（§6.1 第 3–5 步）。
+    pub fn from_absolute(path: &Path, host: &HostContext) -> Result<HomePath, PathError>;
+}
 ```
 
 `SourceRelPath::parse` 只接受以 `/` 分隔的相對路徑，不得含 `\`；去掉 `.` 與空元件，`..` 移除前一個元件，超出來源目錄時失敗（FR-MAN-005、04 §3.1）。元件的名稱限制與 §6.1 第 5 步相同，三個平台都檢查，來源目錄才能在三個平台使用。這是純文字的處理，實際讀取時路徑中的連結由 `FileSystem` 拒絕（§6.1）。
@@ -352,7 +365,7 @@ impl HostContext {
 }
 ```
 
-**本節用到的後半介面**：`FileSystem` 的讀取、列出目錄、建立、取代與刪除，`Observation`（§6.3 的觀測），`WriteLock`（§6.7 的鎖定），`SyncHook`（§8.2），以及 `StateStore`、`StateLoadResult`、`TargetSet`、`ApplyPlan`，都在 §4 後半定義。本節只依賴下列行為：
+**本節用到的後半介面**：`FileSystem` 的讀取、列出目錄、建立、取代與刪除，`Observation`（§6.3 的觀測），`WriteLock`（§6.7 的鎖定），`SyncHook`（§8.2），以及 `StateStore`、`StateLoadResult`、`TargetSet`、`ApplyPlan`，都在 §4.10–§4.12 定義。本節只依賴下列行為：
 
 - 讀取：以 home 或來源目錄為起點，依 §6.1 走訪，只開啟一般檔案，回傳內容與觀測。路徑中有連結、檔案是連結或其他類型時失敗，並說明類型。
 - 列出目錄：回傳每個項目的名稱與類型，不跟隨連結。
@@ -538,16 +551,24 @@ impl BuiltinTemplate {
 
 ```rust
 pub struct Layout { pub source: HomePath, pub config: HomePath, pub state: HomePath }
+pub struct BatchId(String); // §5.1 的批次編號，可能帶 -2、-3；由 RecoveryManager 選定（§4.13）
 impl Layout {
     /// 設定目錄，依 XDG_CONFIG_HOME 或預設位置（§5.1）。
     pub fn config_dir(host: &HostContext, diags: &mut Diagnostics) -> Checked<HomePath>;
+    /// 狀態目錄，依 XDG_STATE_HOME 或預設位置。取得鎖定前使用（§6.7）。
+    pub fn state_dir(host: &HostContext, diags: &mut Diagnostics) -> Checked<HomePath>;
     /// 三個目錄，來源目錄依本機設定的 source。
     pub fn new(host: &HostContext, local: &LocalSettings, diags: &mut Diagnostics) -> Checked<Layout>;
+    /// 指定來源目錄；初始化使用（§4.16）。
+    pub fn with_source(host: &HostContext, source: HomePath, diags: &mut Diagnostics) -> Checked<Layout>;
     pub fn local_settings(&self) -> HomePath;   // <設定目錄>/local.toml
     pub fn manifest(&self) -> HomePath;
     pub fn profile(&self) -> HomePath;
     pub fn modules(&self) -> HomePath;
     pub fn state_file(&self) -> HomePath;
+    pub fn lock_file(&self) -> HomePath;
+    pub fn txn_dir(&self, batch: &BatchId) -> HomePath;     // <狀態目錄>/txn/<批次編號>
+    pub fn backup_dir(&self, batch: &BatchId) -> HomePath;  // <狀態目錄>/backups/<批次編號>
     pub fn reserved(&self) -> Vec<Reserved>;    // §5.2 的保留位置
 }
 ```
@@ -572,7 +593,7 @@ impl<'a> ConfigLoader<'a> {
 pub fn parse_manifest(text: &str, origin: &Origin, diags: &mut Diagnostics) -> Checked<Manifest>;
 ```
 
-呼叫順序：`Layout::config_dir` → `load_local` → `Layout::new` → `load`。`layout` 在第 0 層，不能使用 `FileSystem`，所以 `Layout::new` 只做文字的處理；三個目錄是否互相包含要依 §6.2 的位置鍵判定，由初始化負責（§5.2、§4 後半）。
+呼叫順序：`Layout::config_dir` → `load_local` → `Layout::new` → `load`。`layout` 在第 0 層，不能使用 `FileSystem`，所以 `Layout::new` 只做文字的處理；三個目錄是否互相包含要依 §6.2 的位置鍵判定，由初始化負責（§5.2、§4.16）。
 
 **前置條件**：會寫入的子指令已取得鎖定（§6.7），讀到的檔案在指令結束前不會被其他 rosamta 程序改寫。預覽與查詢不取得鎖定，讀到的是當下的檔案。
 
@@ -819,9 +840,9 @@ impl PreflightChecker {
 }
 ```
 
-`TargetSet` 與 `ApplyPlan` 由 `Planner` 產生（§4 後半）。`TargetSet` 是每個啟用輸出在目前平台的目標，包含正規化後的路徑、位置鍵（§6.2）與 `target` 的宣告位置，以及保留位置的位置鍵；它不需要渲染，欄位值有錯時也能建立。
+`TargetSet` 與 `ApplyPlan` 由 `Planner` 產生（§4.12）。`TargetSet` 是每個啟用輸出在目前平台的目標，包含正規化後的路徑、位置鍵（§6.2）與 `target` 的宣告位置，以及保留位置的位置鍵；它不需要渲染，欄位值有錯時也能建立。
 
-**前置條件**：每個階段的輸入都已產生。`ApplyService` 依序呼叫：`check_inputs` 與 `check_targets` 都會執行，不因前者失敗而略過；兩者都通過才渲染並建立計畫，再呼叫 `check_plan`。如此 USE-004 的三種錯誤（欄位值、目標碰撞、manifest 屬性）會在同一次回報（§4 後半的 `ApplyService`）。
+**前置條件**：每個階段的輸入都已產生。`ApplyService` 依序呼叫：`check_inputs` 與 `check_targets` 都會執行，不因前者失敗而略過；兩者都通過才渲染並建立計畫，再呼叫 `check_plan`。如此 USE-004 的三種錯誤（欄位值、目標碰撞、manifest 屬性）會在同一次回報（§4.15）。
 
 **後置條件**：每個階段都執行該階段的所有檢查，不在第一個錯誤停止。已經由前面的步驟回報的問題不重複回報，例如 `ConfigLoader` 回報過的檔案，或 `conflicted` 的欄位。
 
@@ -841,10 +862,11 @@ impl PreflightChecker {
 | 目標 | 兩個輸出的位置鍵相同，或一個是另一個的前段，列出每個輸出的名稱與 `target` 的位置 | FR-PLN-009、FR-PLN-010 | `preflight.collision` |
 | 目標 | 目標位於保留位置、是保留目錄的上層，或檔名含 `.rosamta-tmp.`（§5.2） | FR-PLN-007、DATA-005 | `preflight.reserved` |
 | 目標 | 目標的某一層上層目錄是連結（§6.1） | DC-002、SEC-002 | `preflight.linked-parent` |
-| 計畫 | 必須操作的目標或來源的類型不受支援（04 §3.1） | FR-PLN-007、DC-003 | `preflight.unsupported-type` |
+| 目標 | 走訪目標的上層目錄失敗，例如權限不足（§4.12） | FR-PLN-007 | `preflight.target-path` |
+| 計畫 | 必須操作的目標或來源的類型不受支援，包括目標的某一層上層不是目錄（04 §3.1、§4.12） | FR-PLN-007、DC-003 | `preflight.unsupported-type` |
 | 計畫 | 要接管的連結與狀態目錄不在同一個檔案系統（§6.5） | SEC-002 | `preflight.backup-device` |
 
-嚴格模式的 drift 衝突不屬於預檢，由 `ApplyService` 的模式檢查處理（04 §2、§4 後半）。
+嚴格模式的 drift 衝突不屬於預檢，由 `ApplyService` 的模式檢查處理（04 §2、§4.15）。
 
 `check_inputs` 檢查所有層級的值，而不只是最終值：值的型別與主機無關，在一台主機上被覆寫的錯誤值，到了另一台主機仍會出錯，因此在每台主機都回報。必填的檢查只看最終值。
 
@@ -861,7 +883,10 @@ impl PreflightChecker {
 ```rust
 pub struct TomlEditor { /* toml_edit 的文件、換行方式、是否有 BOM */ }
 
-pub enum EditValue { String(String), Bool(bool), Strings(Vec<String>) }
+pub enum EditValue {
+    String(String), Integer(i64), Float(f64), Bool(bool),
+    Array(Vec<EditValue>), InlineTable(Vec<(String, EditValue)>),
+}
 
 impl TomlEditor {
     /// 混用 LF 與 CRLF 時拒絕（§5.3）。
@@ -966,7 +991,7 @@ pub struct OperationResult {
 3. 輸出仍在 manifest 中時：使用者輸出移除 `[outputs.<名稱>]` 與上方的註解；內建輸出把 `[builtin.<名稱>]` 改成只有 `removed = true`，原有的其他屬性一併移除。取代 manifest。
 4. 有紀錄時，刪除這些紀錄，提交狀態檔。
 
-輸出不在 manifest 中，但有帶 `forget_pending` 的紀錄時，表示上次在第 3 步之後中止，只執行第 4 步。輸出不在 manifest 中也沒有紀錄時失敗。狀態檔的寫入依 `StateStore` 的提交規則（§4 後半），被取代的必須是第 1 步載入的版本。
+輸出不在 manifest 中，但有帶 `forget_pending` 的紀錄時，表示上次在第 3 步之後中止，只執行第 4 步。輸出不在 manifest 中也沒有紀錄時失敗。狀態檔的寫入依 `StateStore` 的提交規則（§4.11），被取代的必須是第 1 步載入的版本。
 
 **錯誤**：
 
@@ -1060,6 +1085,725 @@ pub struct ResolvedValueDescription {
 **錯誤**：`query.unknown-module`、`query.unknown-field`、`query.unknown-output`（列出相近的名稱）、`query.no-match`（沒有輸出以該路徑為目標）、`query.path`（路徑不在 home 內或無法轉換），以及 §4.5 的 `template.*`。
 
 **隱藏的設計決定**：路徑查詢的比對方式；引用無法判定時的處理。
+
+### 4.10 FileSystem 與同步點
+
+`fs` module 定義檔案系統的 trait、觀測與位置鍵的型別、鎖定，以及同步點。平台的實作在 `rosamta-platform`（§3.3），core 只認得這裡的型別。
+
+**檔案身分與觀測**：
+
+```rust
+/// 一次執行內有效的檔案身分（ASM-04）：Linux 與 macOS 為 st_dev 加 st_ino，Windows 為 volume 序號加 128 位元 file ID。
+pub struct FileId { /* 由 platform 建立 */ }
+impl FileId {
+    /// 寫進狀態檔的部分（§5.10）：Linux 與 macOS 不含 st_dev（ASM-15）。
+    pub fn persistent(&self) -> PersistentId;
+    /// 是否在同一個檔案系統（§6.5 連結的接管）。
+    pub fn same_device(&self, other: &FileId) -> bool;
+}
+pub struct PersistentId { pub volume: Option<u64>, pub file: u128 }
+
+pub struct Sha256([u8; 32]);
+pub struct Version { pub sha256: Sha256, pub mode: Option<u32> } // mode 只在 Linux 與 macOS 有值，是實際的權限位元
+
+pub enum EntryKind { Regular, Directory, Symlink, Other(OtherKind) }
+pub enum OtherKind { Fifo, Device, Socket, ReparsePoint } // ReparsePoint：IO_REPARSE_TAG_SYMLINK 以外（§6.3）
+
+/// §6.3 的觀測。
+pub struct Observation {
+    pub at: HomePath,
+    pub parents: Vec<FileId>, // home 之下到父目錄，已存在的每一層
+    pub entry: EntryState,
+}
+pub enum EntryState {
+    /// 目標不存在。parents 比路徑的層數少時，表示上層目錄也不存在。
+    /// blocker：第一個不存在的層之前，有一層存在但不是目錄（也不是連結）。
+    Missing { blocker: Option<(HomePath, EntryKind)> },
+    /// version 只有一般檔案才有。
+    Present { kind: EntryKind, id: FileId, version: Option<Version> },
+}
+
+pub struct FileInspection { pub observation: Observation, pub content: Option<Vec<u8>> }
+pub enum Content { Keep, Discard } // 一般檔案的內容是否保留在結果中
+
+pub struct DirEntry { pub name: String, pub kind: EntryKind }
+
+/// 管理與初始化回報的檔案變更（§4.8、§4.16）。
+pub struct FileChange { pub at: HomePath, pub kind: ChangeKind }
+pub enum ChangeKind { Created, Modified, Removed }
+```
+
+`Observation` 只能由 `FileSystem` 產生，或由 `fs` module 依已有的觀測推導，例如「本批建立的目錄」（見下方的綁定操作）。§5.11 的判定以它為輸入，單元測試以 `pub(crate)` 的建構函式直接建立（§8.1）。
+
+**位置鍵**（§6.2）：
+
+```rust
+pub struct LocationKey { /* 已存在部分的身分，以及其後的名稱 */ }
+pub enum Relation { Same, Ancestor, Descendant, Unrelated }
+impl LocationKey {
+    pub fn relation(&self, other: &LocationKey) -> Relation;
+}
+```
+
+`relation` 依 §6.2 判定：兩者最深的已存在元件身分相同，而且其後的名稱相同時為 `Same`；一個位於另一個之內時為 `Ancestor` 或 `Descendant`。名稱是否轉成小寫，在建立位置鍵時依目錄是否區分大小寫決定，比較時不再處理。
+
+**介面**：
+
+```rust
+pub trait FileSystem {
+    // 唯讀：走訪不跟隨連結（§6.1），不需要鎖定
+    fn inspect(&self, at: &HomePath, content: Content) -> Result<FileInspection, FsError>;
+    fn list_dir(&self, at: &HomePath) -> Result<Vec<DirEntry>, FsError>;
+    fn location_key(&self, at: &HomePath) -> Result<LocationKey, FsError>;
+    fn case_sensitive(&self, dir: &HomePath) -> Result<bool, FsError>;
+    /// 讀取一般檔案的綁定版本：prepare 走訪並核對類型，execute 經由持有的 handle 開檔讀取，
+    /// confirm 重新走訪（§6.3）。其他類型以 FsErrorKind::NotRegular 失敗。
+    fn prepare_read<'a>(&'a self, at: &HomePath) -> Result<Box<dyn Prepared + 'a>, FsError>;
+    /// prepare_read 的三次呼叫連續執行，中間沒有同步點。
+    fn read_file(&self, at: &HomePath) -> Result<(Vec<u8>, Observation), FsError> { /* … */ }
+
+    // 程式自己的目錄與鎖定（§5.1、§6.7）
+    fn ensure_private_dir(&self, at: &HomePath) -> Result<(), FsError>;
+    fn lock(&self, file: &HomePath) -> Result<Box<dyn LockGuard>, FsError>;
+    /// 與 at 同一目錄的暫存檔名稱：.<名稱>.rosamta-tmp.<程序編號>.<序號>（§5.1）。
+    fn temp_name(&self, at: &HomePath) -> HomePath;
+    /// 附加一行到 journal（§6.5）並 fsync。
+    fn append_line(&self, lock: &WriteLock, file: &HomePath, line: &str) -> Result<(), FsError>;
+
+    // 綁定的操作（§6.3）：三次呼叫
+    fn prepare<'a>(&'a self, lock: &'a WriteLock, op: FsOp<'a>) -> Result<Box<dyn Prepared + 'a>, FsError>;
+}
+
+pub trait Prepared { fn execute(self: Box<Self>) -> Result<Box<dyn Executed>, FsError>; }
+pub trait Executed { fn confirm(self: Box<Self>) -> Result<OpOutcome, FsError>; }
+pub trait LockGuard {}
+```
+
+會改變檔案的方法都要求 `&WriteLock`，所以不取得鎖定的預覽與查詢無法寫入（FR-PLN-004、FR-QRY-006），由型別保證，不必靠 review。`ensure_private_dir` 是唯一的例外：取得鎖定之前，必須先有放鎖定檔的狀態目錄（§6.7）。它只建立 rosamta 自己的目錄，不碰任何輸出。
+
+**綁定的操作**：每個操作分成三次呼叫，對應 §6.3 的步驟。core 在呼叫之間到達同步點（§8.2）：
+
+| 呼叫 | §6.3 的步驟 | 之後的同步點 |
+| --- | --- | --- |
+| `prepare` | 1、2：從 home 走訪、核對父目錄與目標，持有 handle | `BeforeOperation`；擷取快照與製作備份為 `BeforeCapture` |
+| `execute` | 3：系統呼叫；取代與刪除另含交換或移開後的核對，不符時換回原位 | `AfterOperation`；擷取快照與製作備份為 `AfterCapture` |
+| `confirm` | 4、5：再從 home 走訪，確認路徑仍通往持有的目錄，目標是預期的結果；路徑已改變時經由 handle 復原 | — |
+
+```rust
+pub enum FsOp<'a> {
+    CreateFile   { expect: &'a Observation, content: Source<'a>, mode: NewMode, temp: &'a HomePath },
+    ReplaceFile  { expect: &'a Observation, content: Source<'a>, mode: NewMode, temp: &'a HomePath },
+    DeleteFile   { expect: &'a Observation, temp: &'a HomePath },
+    SetMode      { expect: &'a Observation, mode: u32 },
+    CreateDir    { expect: &'a Observation, private: bool },
+    RemoveDir    { expect: &'a Observation },                  // 必須是空的
+    Capture      { expect: &'a Observation, into: &'a HomePath }, // 複製成 0600 的新檔，不覆蓋
+    Backup       { expect: &'a Observation, into: &'a HomePath }, // hard link，不行時複製；連結只能 hard link
+    RestoreLink  { backup: &'a Observation, expect: &'a Observation }, // 把連結的備份改名回目標，取代 expect
+    MoveDir      { expect: &'a Observation, to: &'a Observation }, // 不覆蓋的改名（§6.3 初始化）
+    RemoveTree   { expect: &'a Observation },                  // 只用於初始化的暫存目錄
+}
+
+pub enum Source<'a> {
+    Bytes(&'a [u8]),
+    Snapshot { copy: &'a Observation }, // 回復時從快照讀取，邊讀邊核對 SHA-256
+}
+
+pub enum NewMode {
+    Declared(u32),          // 宣告的權限（FR-MAN-015）
+    KeepExisting,           // 原檔的權限，Windows 依 §6.4 複製 DACL（FR-MAN-016）
+    Default,                // 0666 去掉 umask；Windows 繼承目錄的 ACL
+    Restore(SecurityInfo),  // 回復：擷取快照時記下的權限或 DACL
+}
+
+pub struct OpOutcome {
+    pub result: Observation,               // 操作後的目標；刪除時為 Missing
+    pub written: Option<Version>,          // 建立與取代：實際寫入的內容，邊寫邊計算
+    pub captured: Option<CaptureInfo>,     // 擷取快照與製作備份
+    pub content: Option<Vec<u8>>,          // prepare_read 讀到的內容
+}
+pub struct CaptureInfo { pub copy: Observation, pub sha256: Sha256, pub security: SecurityInfo, pub linked: bool }
+pub struct SecurityInfo { /* Linux 與 macOS 的權限位元，或 Windows 的 DACL */ }
+```
+
+`expect` 的父目錄可以是本批建立的目錄：`CreateDir` 的 `OpOutcome::result` 帶有新目錄的身分，`Observation::under(&created, name)` 以它推導子項目的預期觀測。這就是 §6.3 步驟 1「本批建立的目錄，以建立時記下的身分核對」。
+
+**前置條件**：`HomePath` 已依 §6.1 正規化。`temp` 由 `temp_name` 取得；批次中的暫存檔名稱已先寫入 journal（§6.5）。
+
+**後置條件**：
+
+- 走訪、開檔與各操作的系統呼叫依 §6.1、§6.3、§6.4 與 §6.8，只依賴 §7 的假設。
+- `inspect` 不開啟非一般檔案（04 §3.1、A18）；一般檔案以 `O_NOFOLLOW | O_NONBLOCK` 開啟後，以 handle 核對類型再讀取（ASM-21）。`Content::Discard` 時只計算 SHA-256。
+- `prepare` 的核對不符時回傳 `Stale`，不執行任何系統呼叫。`execute` 失敗時，平台已撤回的部分不留下效果，例如交換後發現版本不符而換回原位；`FsError::applied` 說明操作是否已生效。
+- `confirm` 發現路徑不再通往持有的目錄時，經由 handle 復原，回傳 `Stale` 並標明已復原（ASM-06）。發現目標不是預期的結果時，不再動它。
+- `written` 由實作在寫入暫存檔時計算，是實際寫入檔案的位元組；core 以它核對期望的版本（§4.14）。
+- 錯誤不會被當成「不存在」：只有作業系統回報不存在（`ENOENT`、`ERROR_FILE_NOT_FOUND` 等）才是 `Missing`（03 C4）。
+
+```rust
+pub struct FsError {
+    pub kind: FsErrorKind,
+    pub at: HomePath,
+    pub os: Option<OsErrorInfo>, // 作業系統的錯誤代碼與訊息
+    pub applied: Applied,        // No、Undone（已經由 handle 復原）、Yes
+}
+
+pub enum FsErrorKind {
+    LinkInPath { component: HomePath, points_to: Option<String> }, // §6.1
+    NotRegular(EntryKind),
+    Stale(StaleWhat),       // 觀測失效（§6.3）
+    AlreadyExists,          // 不覆蓋的建立或改名遇到既有項目（A15、A22）
+    Locked,                 // 另一個程序持有鎖定（§6.7）
+    PermissionDenied,
+    NoSpace,
+    CrossDevice,            // hard link 無法跨檔案系統
+    Unsupported,            // 例如檔案系統不支援交換時，連 renameat 也失敗
+    Io,
+}
+
+pub enum StaleWhat {
+    Parent { depth: usize }, // 某一層上層目錄的身分不符，或已不存在
+    Kind, Identity, Version, // 目標的類型、身分或版本與觀測不同
+    Occupied,                // 預期不存在的目標已存在
+    PathMoved,               // 操作後路徑不再通往持有的目錄（ASM-06）
+    UnexpectedResult,        // 操作後的目標不是預期的結果
+}
+```
+
+**同步點**（§8.2）：
+
+```rust
+pub trait SyncHook { fn reach(&self, point: SyncPoint, op: OpKind, at: Option<&HomePath>); }
+pub struct NoSync; // 正式執行使用，什麼都不做
+
+pub enum SyncPoint {
+    AfterPreflight, BeforeCapture, AfterCapture, BeforeOperation, AfterOperation,
+    BeforeRecheck, BeforeCommit, BeforeCompletion, BeforeRollback,
+}
+
+pub enum OpKind {
+    StateLoad, StateCapture, StateCommit, StateRollback,             // 狀態檔
+    Capture, Backup, Create, Replace, Delete, SetMode, CreateDir,    // 目標
+    RevertDelete, RevertReplace, RevertCreate, RevertSetMode, RevertRemoveDir, // 回復
+    ManifestWrite, LocalWrite, SourceCopy, SourceMoveIn,             // 管理與初始化
+}
+```
+
+**鎖定**（§6.7）：
+
+```rust
+pub struct WriteLock { /* LockGuard，持有到程序結束 */ }
+impl WriteLock {
+    /// 建立狀態目錄（§5.1），再取得 <狀態目錄>/lock 的獨占鎖定，不等待。
+    pub fn acquire(fs: &dyn FileSystem, state_dir: &HomePath, diags: &mut Diagnostics) -> Checked<WriteLock>;
+}
+```
+
+`WriteLock` 沒有其他建構函式，也不實作 `Clone`。執行檔對會寫入的子指令，在讀取任何設定之前呼叫 `acquire`，接著呼叫 `RecoveryManager::clean_stale`（§4.13）。
+
+**錯誤**：`FsError` 不是診斷；呼叫它的類別把它轉成自己的代碼，例如 `config.read-failed`、`template.read-failed`。本節只產生 `lock.busy`（另一個 rosamta 程序正在執行，附鎖定檔的路徑）與 `lock.failed`（建立狀態目錄或開啟鎖定檔失敗）。
+
+**隱藏的設計決定**：走訪與綁定的系統呼叫、各平台的檔案身分、交換不支援時的退回方式、暫存檔的命名、hard link 失敗時改用複製的判斷、DACL 的複製，以及鎖定的實作。這些都在 platform 中，core 只看到上面的型別。
+
+### 4.11 StateStore
+
+**責任**：狀態檔的格式、載入與提交（§5.10）。只處理狀態檔本身；快照與回復由 `RecoveryManager` 負責（§4.13）。
+
+**資料型別**（`state`）：
+
+```rust
+pub struct StateFile { records: BTreeMap<HomePath, ManagedOutputRecord> } // 以 target 為鍵
+impl StateFile {
+    pub fn records(&self) -> impl Iterator<Item = &ManagedOutputRecord>; // 依 target 排序
+    pub fn get(&self, target: &HomePath) -> Option<&ManagedOutputRecord>;
+    pub fn put(&mut self, record: ManagedOutputRecord);     // 取代同一個 target 的紀錄
+    pub fn remove(&mut self, target: &HomePath) -> bool;
+    pub fn by_output(&self, name: &OutputName) -> Vec<&ManagedOutputRecord>;
+    pub fn to_bytes(&self) -> Vec<u8>;                       // §5.10 的 JSON，依 target 排序
+}
+
+pub struct ManagedOutputRecord {
+    pub output: OutputName,
+    pub target: HomePath,
+    pub parent: PersistentId,
+    pub observed: ComparisonMetadata,   // O
+    pub desired: ComparisonMetadata,    // D
+    pub forget_pending: bool,
+}
+
+pub struct ComparisonMetadata { pub sha256: Sha256, pub mode: Option<Permissions> } // §5.10
+
+pub enum StateLoadResult {
+    Loaded(LoadedState),
+    Corrupt { reason: String, line: Option<u32> }, // §5.10 的損毀
+    Newer { format: u64 },                         // 由較新的版本寫入
+    Unreadable(FsError),                           // 讀取失敗、路徑中有連結、不是一般檔案
+}
+
+/// 狀態檔不存在時，file 為空，observation 為 Missing。
+pub struct LoadedState { pub file: StateFile, pub observation: Observation }
+```
+
+C3 的 `StateFile` 與 03 C4 的 `StateLoadResult` 在此成為具體型別。03 把「不存在」列為一種結果；這裡併入 `Loaded`，以 `observation` 區分：兩者在規劃時的處理相同（REL-003），差別只在提交時用建立還是取代。
+
+**介面**：
+
+```rust
+pub struct StateStore<'a> { fs: &'a dyn FileSystem, layout: &'a Layout, sync: &'a dyn SyncHook }
+
+impl<'a> StateStore<'a> {
+    pub fn new(fs: &'a dyn FileSystem, layout: &'a Layout, sync: &'a dyn SyncHook) -> Self;
+    pub fn load(&self) -> StateLoadResult;
+    /// 寫入 new；被取代的必須是 base（A23）。回傳新的基準，供同一個指令的下一次提交使用。
+    pub fn commit(&self, lock: &WriteLock, base: &LoadedState, new: &StateFile, temp: &HomePath)
+        -> Result<LoadedState, FsError>;
+    pub fn path(&self) -> HomePath;
+}
+```
+
+**前置條件**：`commit` 的 `base` 是本指令載入或提交的結果，`temp` 由呼叫端取得（批次中已寫入 journal）。
+
+**後置條件**：
+
+- `load` 經由 `FileSystem::prepare_read` 讀取，在 `prepare_read` 與 `execute` 之間到達 `BeforeCapture`（`StateLoad`），A20 的第一列以此注入。載入規則依 §5.10：不存在時為空的 `Loaded`；損毀與較新的版本分開回報，都不會被當成空紀錄（REL-004）。
+- `commit`：`base` 為 `Missing` 時以 `CreateFile`，否則以 `ReplaceFile` 寫入，`expect` 是 `base.observation`（§6.3）。權限為 `Declared(0o600)`；Windows 繼承狀態目錄的 DACL（§6.4）。在 `BeforeOperation`、`AfterOperation`（`StateCommit`）到達同步點。`written` 與 `new.to_bytes()` 的 SHA-256 不同時，視為寫入失敗。
+- 相同的狀態是相同的位元組（§5.10）。`commit` 不比較新舊內容；是否需要提交由呼叫端決定（§4.14）。
+
+**錯誤**：載入的結果由 `PreflightChecker` 回報為 `preflight.state`（§4.6）；`commit` 的錯誤由呼叫端轉成 `manage.concurrent-edit`、`manage.write-failed`（§4.8），或批次的執行錯誤（§4.14）。
+
+**隱藏的設計決定**：JSON 的欄位名稱、十六進位的寫法與排序；損毀的判定；檔案身分轉成 `PersistentId` 的方式。
+
+### 4.12 Planner
+
+**責任**：判定啟用輸出的目標、比對狀態紀錄、渲染期望內容並觀測目標，依 §5.11 產生計畫。預覽、摘要與套用共用同一個 `Planner`（04 §2、FR-PLN-006）。不寫入任何檔案。
+
+**介面**（`plan`）：
+
+```rust
+pub struct Planner<'a> { fs: &'a dyn FileSystem, host: &'a HostContext, layout: &'a Layout }
+
+impl<'a> Planner<'a> {
+    pub fn new(fs: &'a dyn FileSystem, host: &'a HostContext, layout: &'a Layout) -> Self;
+    /// 不需要渲染的目標集合，給 PreflightChecker::check_targets（§4.6）。
+    pub fn targets(&self, config: &EffectiveConfig, enabled: &EnabledOutputs) -> TargetSet;
+    pub fn plan(&self, input: &PlanInput, diags: &mut Diagnostics) -> Checked<ApplyPlan>;
+}
+
+pub struct TargetSet { pub entries: Vec<TargetEntry>, pub reserved: Vec<(Reserved, LocationKey)> }
+pub struct TargetEntry {
+    pub output: OutputName,
+    pub path: HomePath,
+    pub declared_at: SourceLocation,          // target 的位置（FR-PLN-009）
+    pub key: Result<LocationKey, FsError>,    // 走訪失敗時為錯誤，例如上層目錄是連結
+}
+
+pub struct PlanInput<'a> {
+    pub config: &'a EffectiveConfig,
+    pub enabled: &'a EnabledOutputs,
+    pub sources: &'a BTreeMap<OutputName, LoadedSource>,
+    pub values: &'a TemplateValues,
+    pub state: &'a LoadedState,
+    pub targets: &'a TargetSet,
+    pub choices: &'a Choices,
+    pub keep_current: bool,                   // 預覽要顯示差異時保留目前的內容（FR-PLN-003）
+}
+
+pub struct Choices {
+    pub strict: bool,
+    pub drift: Vec<(Selector, DriftChoice)>,  // FR-DRF-005、FR-DRF-006
+    pub delete_modified: Vec<Selector>,       // FR-DRF-014
+}
+pub enum Selector { All, Path(Located<HomePath>) }
+pub enum DriftChoice { Overwrite, Accept }
+```
+
+`plan` 不接收 `AnalysisContext`：`AnalysisContext` 定義在 `preflight`，而 `preflight` 依賴 `plan`（§3.2），反過來會形成循環。
+
+**計畫的資料型別**：
+
+```rust
+pub struct ApplyPlan { items: Vec<PlanItem>, state: LoadedState, strict: bool }
+impl ApplyPlan {
+    pub fn items(&self) -> &[PlanItem];                       // 依執行順序，也是預覽列出的順序
+    pub fn drift_conflicts(&self) -> impl Iterator<Item = &PlanItem>;
+    pub fn strict_blocked(&self) -> bool;                     // 嚴格模式且有 drift 衝突（FR-DRF-009）
+    pub fn state(&self) -> &LoadedState;
+}
+
+pub struct PlanItem {
+    pub output: OutputName,
+    pub target: HomePath,
+    pub origin: ItemOrigin,
+    pub action: Action,
+    pub disposition: Disposition,
+    pub drift: bool,                          // 有外部修改（FR-DRF-001），包括被接受或覆寫的
+    pub observation: Observation,             // 規劃時的觀測，執行時每個操作都依它核對
+    pub current: Option<Arc<[u8]>>,           // keep_current 時，目前一般檔案的內容
+    pub desired: Option<DesiredContent>,      // 啟用輸出的期望內容 N；清除項目為 None
+    pub record_before: Option<ManagedOutputRecord>,
+    pub record: RecordChange,
+}
+
+pub enum ItemOrigin { Enabled { declared_at: SourceLocation, ownership: Ownership, takeover: bool }, Cleanup }
+pub enum Action { Create, Update, Delete, Unchanged }       // C3 的 action
+
+pub enum Disposition {                                      // C3 的 disposition
+    Proceed,                                                // 依規則執行，包括只更新紀錄
+    Takeover,                                               // 備份未受管理的目標後寫入（FR-MAN-019）
+    Resolve(Choice),                                        // 使用者指定的處理
+    Retain(RetainReason),
+}
+pub enum Choice { Overwrite, Accept, Delete }
+
+pub enum RetainReason {
+    DriftConflict,                // FR-DRF-004；嚴格模式下另由 strict_blocked 阻擋整批
+    Unmanaged(EntryKind),         // 未受管理、沒有接管授權（FR-MAN-020）
+    Modified,                     // 待清除的舊輸出已被修改（FR-DRF-013）
+    UnsupportedType(EntryKind),   // 待清除的舊目標不是一般檔案
+    LocationUnconfirmed,          // 紀錄的位置無法確認（§5.11、A5）
+    Reserved,                     // 紀錄指向保留位置（§5.2）
+    ForgetPending,                // 停止管理尚未完成（§5.13）
+}
+
+pub enum RecordChange {
+    Keep,                                                     // record_before 不變
+    Remove,                                                   // 刪除 record_before
+    Put { observed: ComparisonMetadata, desired: ComparisonMetadata }, // 取代 record_before，或新增
+}
+
+/// 期望內容：規劃時渲染或讀入的位元組，建立後不可修改。
+pub struct DesiredContent { bytes: Arc<[u8]>, metadata: ComparisonMetadata }
+impl DesiredContent {
+    pub fn bytes(&self) -> &[u8];
+    pub fn metadata(&self) -> &ComparisonMetadata;            // N
+}
+```
+
+C3 以字串表示的 `action`、`disposition`、`reason` 改成 enum，`reason` 併入 `Retain`：保留的項目一定有原因，其他項目沒有。每個 enum 值有固定的字串，供 IF-004 使用（MNT-003）。
+
+**期望內容與 Executor 的傳遞契約**（03 C3 末段、04 §2）：
+
+- 執行期參照就是 `DesiredContent`：規劃時把渲染結果或原樣複製來源的位元組放進記憶體，同時計算 SHA-256。`DesiredContent` 的建構函式是 `pub(crate)`，core 中只有 `Planner` 呼叫它（§11 核對），所以內容一定來自預檢時的那一次讀取或渲染。
+- `Executor` 只寫入 `desired.bytes()`，不讀取來源、不渲染（A24）。寫入後以 `OpOutcome::written` 核對 `metadata().sha256`；不同時是執行錯誤（§4.14）。內容無法取得的情況因此只剩寫入途中損毀，§8.3 以 `FaultFs` 注入。
+- 狀態檔只記錄 `metadata()`，不記錄 `bytes()`（SEC-001）。
+- `observation` 是執行時每個操作的 `expect`。`Executor` 不重新觀測後再決定動作：動作由計畫決定，執行時只核對觀測是否仍然成立。
+
+**前置條件**：`targets` 在 `check_inputs` 之前或之後呼叫皆可，不依賴值的檢查。`plan` 在 `check_inputs` 與 `check_targets` 都通過之後呼叫：`values` 只能由 `check_inputs` 產生（§4.5），目標沒有碰撞，狀態檔已成功載入。
+
+**後置條件**：
+
+- `targets`：每個啟用、在 manifest 中、有目前平台 `target` 且能展開的輸出一項。無法展開的不列入，由 `check_inputs` 回報。`key` 經由 `FileSystem::location_key` 取得；上層目錄是連結時為 `LinkInPath`，`check_targets` 回報 `preflight.linked-parent`，其他走訪錯誤回報 `preflight.target-path`。保留位置來自 `Layout::reserved`。
+- 期望內容：範本以 `render` 渲染，原樣複製使用 `LoadedSource::Verbatim` 的位元組。`metadata().mode` 只在輸出宣告了權限，而且平台是 Linux 或 macOS 時有值（§5.10）。渲染錯誤記在 `diags`，該輸出不進入計畫，`plan` 回傳 `Err`。
+- 觀測：每個啟用輸出的目標與每筆紀錄的目標各觀測一次（`inspect`）。`keep_current` 為 `false` 時不保留內容，只計算 SHA-256。
+- 紀錄的比對：每筆紀錄的 `target` 轉成位置鍵（§6.2），與啟用輸出的位置鍵比較；`Same` 的紀錄是該輸出的紀錄，**不論名稱是否相同**。輸出改名而目標不變時，紀錄沿用並改成新名稱，不清除後重建。比對後，依 §5.11 的「紀錄位置確認」檢查父目錄的 `PersistentId`。位置鍵相同的紀錄超過一筆時，全部視為位置無法確認。
+- 啟用的輸出依 §5.11 決定 `action`、`disposition` 與 `record`：
+  - 有紀錄而且位置確認、目標是一般檔案時，依 §5.11 的五列。第 5 列的 drift 衝突依 `choices` 決定 `Resolve(Overwrite)`、`Resolve(Accept)` 或 `Retain(DriftConflict)`。
+  - 沒有紀錄、位置無法確認，或目標不是一般檔案時，依 §5.11 的未受管理規則：一般檔案或連結，有接管授權為 `Takeover`，否則 `Retain(Unmanaged(類型))`。目錄與其他類型沒有接管授權時為 `Retain(Unmanaged(類型))`；有接管授權時，`check_plan` 回報 `preflight.unsupported-type`（04 §3.1）。
+  - `create-only` 依 §5.11：目標存在時為 `Unchanged`、`Proceed`、`RecordChange::Keep`。
+  - 比對到的紀錄帶有 `forget_pending` 時一律 `Retain(ForgetPending)`。
+- 沒有被啟用輸出比對到的紀錄，各產生一個清除項目，依 §5.11 的清除表。觀測遇到 `LinkInPath` 時為 `Retain(LocationUnconfirmed)`；位於保留位置時為 `Retain(Reserved)`；已修改而 `choices` 指定刪除時為 `Resolve(Delete)`。
+- 嚴格模式：drift 衝突一律為 `Retain(DriftConflict)`，不套用 `choices`（03 §12 第 1 項），`strict_blocked()` 為 `true`。
+- `Selector::Path` 以位置鍵與項目比較。沒有比對到任何 drift 衝突（`drift`）或已修改的舊輸出（`delete_modified`）時，回報警告 `apply.choice-unmatched`。同一個項目同時被指定覆寫與接受時，回報錯誤 `apply.choice-conflict`；`All` 與 `Path` 都指定時，`Path` 優先。
+- 順序：先列清除項目，再列啟用輸出，各自依 `target` 排序。清除在前，舊輸出刪除後空出的路徑才能給新輸出使用。新目標的某一層上層是本批要刪除的舊輸出時，該項目的觀測改為「從那一層起不存在」；上層是其他非目錄的項目（`blocker`）時，`check_plan` 回報 `preflight.unsupported-type`。
+- `Planner` 只使用 `FileSystem` 的唯讀方法。
+
+**錯誤**：`template.render`（§4.5）；`apply.choice-conflict`、`apply.choice-unmatched`（警告）；觀測時的讀取失敗為 `plan.inspect-failed`，附路徑與作業系統的錯誤。
+
+**隱藏的設計決定**：紀錄與目標的比對方式；項目的順序；`Choices` 的優先順序；期望內容保存在記憶體中。
+
+### 4.13 RecoveryManager
+
+**責任**：保存回復快照、記錄本批的每一個操作，在失敗時依相反順序回復（§6.5、§6.6），並清理快照與暫存檔。也負責清理程序中止後殘留的批次目錄。
+
+**介面**（`recovery`）：
+
+```rust
+pub struct RecoveryManager<'a> { /* fs、layout、sync、批次目錄、journal、已完成的操作 */ }
+
+impl<'a> RecoveryManager<'a> {
+    /// §6.6 步驟 1：選定批次編號、建立 txn/<批次編號>/，狀態檔存在時擷取它的快照。
+    pub fn begin(fs: &'a dyn FileSystem, layout: &'a Layout, sync: &'a dyn SyncHook,
+                 lock: &'a WriteLock, started_at: SystemTime, state: &LoadedState)
+        -> Result<Self, ExecError>;
+    pub fn batch(&self) -> &BatchId;
+    /// 取得暫存檔名稱，先附加到 journal（§6.5）。
+    pub fn temp_name(&mut self, at: &HomePath) -> Result<HomePath, ExecError>;
+    /// 擷取快照（§6.5 第 1–3 步）。content 為 false 時不開檔，只記下觀測中的權限（只變更權限的項目）。
+    pub fn capture(&mut self, expect: &Observation, content: bool) -> Result<SnapshotId, ExecError>;
+    /// 記下一個已生效的操作，以及回復它需要的資料。
+    pub fn record(&mut self, done: Done);
+    pub fn rollback(self, diags: &mut Diagnostics) -> RecoveryReport;
+    /// 批次成功：依 journal 清理暫存檔，刪除 txn/<批次編號>/（C4 的 commit）。
+    pub fn finish(self, diags: &mut Diagnostics);
+
+    /// 取得鎖定後、規劃前，清理殘留的批次目錄（§6.5）。由執行檔呼叫。
+    pub fn clean_stale(fs: &dyn FileSystem, layout: &Layout, lock: &WriteLock, diags: &mut Diagnostics);
+    /// 不取得鎖定的指令：只提示殘留的批次目錄，不刪除。
+    pub fn report_stale(fs: &dyn FileSystem, layout: &Layout, diags: &mut Diagnostics);
+}
+
+pub enum Done {
+    Created     { result: Observation },
+    Replaced    { result: Observation, snapshot: SnapshotId, backup: Option<Observation> },
+    LinkTakenOver { result: Observation, backup: Observation },
+    Deleted     { parent: Observation, snapshot: SnapshotId },
+    ModeChanged { result: Observation, snapshot: SnapshotId },
+    DirCreated  { result: Observation },
+    StateCommitted { result: Observation },
+}
+
+pub struct RecoveryReport {
+    pub failures: Vec<RecoveryFailure>,     // 空的表示全部已回復（FR-APL-003）
+    pub state: StateRecovery,               // Untouched、Restored、NotRestored（附原因）
+}
+pub struct RecoveryFailure {
+    pub at: HomePath,
+    pub reason: RecoveryFailureKind,        // Changed、SnapshotMismatch、Occupied、Fs(FsError)
+    pub backup: Option<HomePath>,           // 接管過的目標無法回復時，備份的位置（§5.12）
+}
+```
+
+`BatchId` 選定時，`txn/` 與 `backups/` 底下都不能已有同名的目錄，兩者因此使用同一個編號；`txn/<批次編號>/` 以不覆蓋的方式建立，`backups/<批次編號>/` 在第一次接管時建立（§5.12）。
+
+**前置條件**：已取得鎖定。`begin` 只在計畫有要改動的目標，或需要提交狀態時呼叫（§4.14）；不改動任何東西的批次不建立 `txn/`。
+
+**後置條件**：
+
+- `begin` 依 §6.5 擷取狀態檔的快照，在 `BeforeCapture`、`AfterCapture`（`StateCapture`）到達同步點，核對副本與 `state.observation` 的版本相同（A25）。失敗時刪除剛建立的批次目錄，回傳錯誤，不改動任何目標（03 S5）。
+- `capture` 以 `FsOp::Capture` 寫入 `txn/<批次編號>/<序號>`，比較 `CaptureInfo::sha256` 與 `expect` 的版本，再 `confirm`。三步都通過才回傳 `SnapshotId`；版本不符時刪除副本，回傳觀測失效（A16）。
+- `rollback` 依 §6.6 的回復表，以與 `record` 相反的順序處理每一個 `Done`，最後處理狀態檔。到達 `BeforeRollback` 一次，每個操作在 `BeforeOperation`、`AfterOperation`（`Revert*`、`StateRollback`）到達同步點。使用快照前，以 `Source::Snapshot` 邊讀邊核對 SHA-256（A16）。一項失敗時記下原因，繼續下一項（04 §3.3）。回復成功的接管項目，刪除它的備份；無法回復的，保留備份並列在 `RecoveryFailure::backup`（§5.12）。
+- `rollback` 與 `finish` 都依 §6.5 清理 journal 中的暫存檔與批次目錄，`rollback` 另外移除變空的 `backups/<批次編號>/`。清理失敗只以警告 `apply.cleanup` 回報，不改變結果（04 §3.3）。
+- `clean_stale` 依每個殘留批次目錄中的 journal 清理（§6.5），以警告 `apply.stale-batch` 說明該批次沒有正常結束。狀態目錄與設定目錄最上層、名稱含 `.rosamta-tmp.` 的項目，是管理與初始化留下的暫存檔，一併刪除；來源目錄中的不刪除，因為來源目錄由使用者以 git 管理，這類檔案會出現在 `git status` 中。
+
+**錯誤**：`ExecError`（§4.14）；`RecoveryFailureKind` 的每個值有固定的字串：`recovery.changed`（回復前的核對不符）、`recovery.snapshot-mismatch`、`recovery.occupied`（位置已被占用，A22）、`recovery.failed`（附作業系統的錯誤）。警告：`apply.cleanup`、`apply.stale-batch`。
+
+**隱藏的設計決定**：快照的命名與保存位置；journal 的格式；回復的順序；備份在回復後的處理。
+
+### 4.14 Executor
+
+**責任**：依通過預檢與模式檢查的計畫，執行每個項目、製作接管備份、重檢並提交狀態，失敗時交給 `RecoveryManager` 整批回復（§6.6、03 S2、S5）。
+
+**介面**（`exec`）：
+
+```rust
+/// 通過 check_plan 與模式檢查的計畫。建構函式是 pub(crate)，只有 ApplyService 建立（§11 核對）。
+pub struct ApprovedPlan(ApplyPlan);
+
+pub struct Executor<'a> {
+    fs: &'a dyn FileSystem, layout: &'a Layout, sync: &'a dyn SyncHook, state: &'a StateStore<'a>,
+}
+
+impl<'a> Executor<'a> {
+    pub fn new(fs: &'a dyn FileSystem, layout: &'a Layout, sync: &'a dyn SyncHook,
+               state: &'a StateStore<'a>) -> Self;
+    pub fn execute(&self, lock: &WriteLock, plan: ApprovedPlan, started_at: SystemTime,
+                   diags: &mut Diagnostics) -> ApplyReport;
+}
+
+pub struct ApplyReport {
+    pub batch: Option<BatchId>,
+    pub items: Vec<ItemResult>,                 // 與計畫的項目一一對應，順序相同
+    pub failure: Option<ExecError>,             // 原始的執行錯誤（FR-APL-003）
+    pub recovery: Option<RecoveryReport>,       // 有回復時（FR-APL-003、FR-APL-004）
+}
+impl ApplyReport { pub fn outcome(&self) -> ApplyOutcome; }
+
+pub enum ApplyOutcome { Completed, Partial, Failed } // B-5；exit code 的對應見 §9
+
+pub struct ItemResult {
+    pub output: OutputName,
+    pub target: HomePath,
+    pub action: Action,
+    pub status: ItemStatus,
+    pub backup: Option<HomePath>,               // 接管備份的位置（FR-MAN-019）
+}
+pub enum ItemStatus {
+    Done, Retained(RetainReason),               // 正常結束（C3 的完成、保留）
+    Failed,                                     // 發生執行錯誤的項目，原因在 ApplyReport::failure
+    Reverted, NotReverted,                      // 已回復；無法回復，原因在 RecoveryReport
+    NotRun,                                     // 錯誤發生時尚未處理
+}
+
+pub struct ExecError {
+    pub item: Option<usize>,                    // 計畫中的項目；狀態檔為 None
+    pub at: HomePath,
+    pub kind: ExecErrorKind,
+}
+pub enum ExecErrorKind {
+    Fs(FsError),                                // exec.write-failed：建立、取代、刪除、權限、快照或備份失敗
+    Stale(StaleWhat),                           // exec.stale：觀測失效（§6.3）
+    ContentMismatch,                            // exec.content-mismatch：寫入的內容不是期望內容
+    StateChanged,                               // exec.state-changed：狀態檔不是首次載入或本批寫入的版本
+}
+```
+
+C3 的 `ApplyReport.exitCode` 改為 `outcome()`：core 不決定 exit code，§9 把 `Completed`、`Partial`、`Failed` 對應到 `0`、`2`、`1`。C3 的 `errors` 與 `rollbackFailures` 分別是 `failure` 與 `recovery`；批次在第一個錯誤就停止（§6.6），所以原始錯誤只有一個。
+
+**每個項目的操作**（§6.6 步驟 2）：
+
+| 項目 | 操作的順序 |
+| --- | --- |
+| `Retain` | 無 |
+| `Unchanged`，只更新或不更新紀錄（包括 `Resolve(Accept)`、直接納管、`create-only` 已存在） | 無；由步驟 3、5 核對 |
+| `Delete`，舊目標已不存在 | 無；只移除紀錄 |
+| `Create` | 不存在的上層目錄依序 `CreateDir`，再 `CreateFile`，權限見 §6.4 |
+| `Update`，內容不同（`Proceed`、`Resolve(Overwrite)`） | `capture` → `ReplaceFile` |
+| `Update`，只有權限不同 | `capture`（只記權限）→ `SetMode` |
+| `Takeover`，一般檔案 | `capture` → `Backup` → `ReplaceFile`；內容相同、只有權限不同時，最後一步改為 `SetMode` |
+| `Takeover`，連結 | `Backup`（hard link，§6.5）→ `ReplaceFile`；不另外擷取快照 |
+| `Delete`（`Proceed`、`Resolve(Delete)`） | `capture` → `DeleteFile` |
+
+每個操作的 `expect` 是項目的 `observation`；目錄由本批建立時，依 `CreateDir` 的結果推導（§4.10）。`Backup` 寫到 `backups/<批次編號>/<目標的相對路徑>`，需要的目錄以 `CreateDir`（`private`）建立（§5.12）。每個操作依 §4.10 的三次呼叫執行，成功後以 `RecoveryManager::record` 記下。
+
+**前置條件**：已取得鎖定；`plan` 由 `ApplyService` 在 `check_plan` 與模式檢查都通過後建立，`strict_blocked()` 為 `false`。
+
+**後置條件**：
+
+- 依 §6.6 的六個步驟。計畫有要改動的目標或要提交狀態時才呼叫 `RecoveryManager::begin`；否則直接執行步驟 3 與 5。
+- 新的狀態從 `plan.state()` 複製，依每個 `Done` 項目的 `RecordChange` 修改：`Remove` 刪除 `record_before`；`Put` 刪除 `record_before`，再加入新紀錄，名稱與目標是本項目的，`parent` 取自操作後（或規劃時，若沒有操作）父目錄的 `PersistentId`。保留的項目不改紀錄（FR-APL-009）。新狀態與載入時的位元組相同時不提交。
+- 步驟 3、5 的核對以 `inspect` 進行：寫入的項目核對身分與 `written`；刪除的項目核對仍不存在，父目錄相同；其他項目核對身分、版本與宣告的權限仍與 `observation` 相同。狀態檔核對身分與版本。
+- 任何一步失敗，停止處理後續項目，呼叫 `rollback`。失敗的項目為 `Failed`，已處理的項目依回復結果為 `Reverted` 或 `NotReverted`，未處理的為 `NotRun`，保留的項目仍為 `Retained`。drift 衝突與未授權的接管不是執行錯誤，不觸發回復（03 S5）。
+- `outcome()`：有 `failure` 為 `Failed`；否則沒有保留項目為 `Completed`（包括空計畫，FR-APL-006）；有完成也有保留為 `Partial`（FR-APL-007）；只有保留為 `Failed`（FR-APL-008）。「不變」算完成。
+- `ExecErrorKind` 的每個值有固定的字串，見上方的註解。
+
+**隱藏的設計決定**：每個項目的操作順序；何時開始批次；新狀態的組合方式；完成與回復時各項目狀態的判定。
+
+### 4.15 ApplyService
+
+**責任**：預覽、摘要與套用的流程（03 S1）。依固定的順序呼叫載入、解析、預檢、規劃與執行，套用前做模式檢查。
+
+**介面**（`apply`）：
+
+```rust
+pub struct ApplyService<'a> { fs: &'a dyn FileSystem, host: &'a HostContext, sync: &'a dyn SyncHook }
+
+impl<'a> ApplyService<'a> {
+    pub fn new(fs: &'a dyn FileSystem, host: &'a HostContext, sync: &'a dyn SyncHook) -> Self;
+    /// 預覽與摘要（FR-QRY-005）。不取得鎖定，不寫入任何檔案。
+    pub fn preview(&self, req: &ApplyRequest, diags: &mut Diagnostics) -> Checked<ApplyPlan>;
+    pub fn apply(&self, lock: &WriteLock, req: &ApplyRequest, diags: &mut Diagnostics) -> Checked<ApplyReport>;
+}
+
+pub struct ApplyRequest {
+    pub choices: Choices,          // §4.12：嚴格模式與指定的處理方式
+    pub diff: bool,                // 預覽是否顯示內容差異；摘要與套用為 false
+    pub started_at: SystemTime,    // 批次編號（§5.1、§8.1），由執行檔取得目前時間
+}
+```
+
+C4 的 `run(request)` 分成 `preview` 與 `apply`：只有套用要求 `&WriteLock`，預覽因此無法寫入（§4.10）。`started_at` 由呼叫端傳入，core 不讀取系統時間，測試可以指定（§8.1）。
+
+**流程**：兩個方法共用第 1–8 步：
+
+1. `Layout::config_dir` → `ConfigLoader::load_local` → `Layout::new` → `ConfigLoader::load`。
+2. `StateStore::load`。
+3. `ValueResolver::resolve`；`Profile::enabled`。
+4. 對 manifest 中每個啟用的輸出呼叫 `SourceLoader::load`。
+5. `Planner::targets`。
+6. `check_inputs` 與 `check_targets` 都執行（§4.6）。`config.is_complete()` 為 `false`、或任一階段失敗時，到此結束，回傳 `Err`。
+7. `Planner::plan`，再 `check_plan`。
+8. 模式檢查：`plan.strict_blocked()` 時，對每個 drift 衝突回報錯誤 `apply.strict-conflict`，附輸出名稱與目標路徑（03 §12 第 1 項）。
+
+`preview` 在第 7 步後回傳計畫；第 8 步只在套用時阻擋，預覽照常回傳計畫，並在計畫中標出嚴格模式將不寫入任何輸出（FR-DRF-003）。`apply` 在第 8 步通過後到達 `AfterPreflight`，建立 `ApprovedPlan`，交給 `Executor::execute`，回傳它的回報。
+
+**前置條件**：套用時已取得鎖定，執行檔已呼叫 `RecoveryManager::clean_stale`；預覽時執行檔已呼叫 `report_stale`。
+
+**後置條件**：
+
+- 預覽、摘要與套用使用同一個 `Planner` 與同一組 `Choices`，所以在 FR-PLN-006 的條件下，套用的項目與動作與預覽相同。
+- 第 6 步的錯誤在同一次回報，USE-004 的三種錯誤因此一起列出（§4.6）。設定不完整時仍執行第 6 步，檢查讀到的部分。
+- 預覽只使用 `FileSystem` 的唯讀方法，不取得鎖定，不建立任何目錄（FR-PLN-004）。
+- 預檢或模式檢查失敗時，不建立 `ApprovedPlan`，不呼叫 `Executor`，不改動任何檔案（FR-APL-008、FR-DRF-009）。
+
+**錯誤**：`apply.strict-conflict`；其他代碼由各步驟產生。執行錯誤不是診斷，記在 `ApplyReport`（§4.14）。
+
+**隱藏的設計決定**：步驟的順序，以及哪一步失敗時停止。
+
+### 4.16 InitializationService 與 GitClient
+
+**責任**：準備來源目錄、建立或合併本機設定、記錄來源目錄的位置，並依選項執行第一次套用（03 S6、FR-INI-001–011）。`GitClient` 只負責把遠端 repo clone 到指定的目錄。
+
+**介面**（`init`）：
+
+```rust
+pub trait GitClient {
+    /// 把 url clone 到 dest。dest 是已存在的空目錄。不讀取標準輸入，不詢問使用者。
+    fn clone_into(&self, url: &str, dest: &HomePath) -> Result<(), GitError>;
+}
+pub enum GitError {
+    NotFound,                                       // 找不到 git 執行檔
+    Failed { status: Option<i32>, stderr: String }, // git 的 exit status 與錯誤訊息
+}
+
+pub struct InitializationService<'a> {
+    fs: &'a dyn FileSystem, host: &'a HostContext, sync: &'a dyn SyncHook,
+    git: &'a dyn GitClient, apply: &'a ApplyService<'a>,
+}
+
+impl<'a> InitializationService<'a> {
+    pub fn new(/* 同上的欄位 */) -> Self;
+    pub fn initialize(&self, lock: &WriteLock, req: &InitializationRequest, diags: &mut Diagnostics)
+        -> Checked<InitializationResult>;
+}
+
+pub struct InitializationRequest {
+    pub repo: Option<String>,                 // 遠端 repo 的位址（IF-012）
+    pub source: Option<PathBuf>,              // 絕對路徑（FR-INI-005）；相對路徑由執行檔轉換
+    pub tags: Vec<Tag>,                       // FR-INI-006
+    pub values: Vec<(FieldRef, RawValue)>,    // FR-INI-006；文字轉成 RawValue 的規則見 §9
+    pub apply: Option<ApplyRequest>,          // None 表示只初始化（FR-INI-003）
+}
+
+pub struct InitializationResult {
+    pub source: HomePath,
+    pub source_created: bool,                 // 這次建立或取得來源目錄
+    pub changes: Vec<FileChange>,             // 建立或修改的檔案：manifest、本機設定
+    pub apply: Option<ApplyReport>,
+}
+```
+
+C4 的 `GitClient.cloneToStaging(url)` 改成 `clone_into(url, dest)`：暫存目錄由 `InitializationService` 經由 `FileSystem` 建立，才能依 §6.3 記下身分並在 clone 前後核對；`GitClient` 只執行 git。
+
+platform 的實作以 `std::process` 執行 `git clone -- <url> <dest>`：`--` 避免以 `-` 開頭的位址被當成選項；標準輸入接到空裝置，設定 `GIT_TERMINAL_PROMPT=0`，git 需要帳號密碼時直接失敗，不等待輸入（FR-INI-006）。SSH 使用使用者既有的金鑰與設定（AS-4）。
+
+**流程**：
+
+1. 依 `Layout::config_dir` 與 `load_local` 讀取既有的本機設定。來源目錄依序取 `req.source`、本機設定的 `source`、預設位置（§5.1），以 `Layout::with_source` 建立 `Layout`。
+2. 依 §5.2 檢查：三個目錄都不等於 home，彼此的位置鍵沒有 `Same`、`Ancestor` 或 `Descendant` 的關係，路徑中沒有連結。
+3. 準備來源目錄：
+   - 指定了 `repo`：來源目錄的位置不得存在，包括空目錄，否則失敗，不改動任何檔案（FR-INI-009）；空目錄的提示是先刪除它。刪除該位置旁邊殘留的 `.<名稱>.rosamta-tmp.*` 暫存目錄：鎖定保證沒有其他 rosamta 正在使用它們。建立不存在的上層目錄，在同一個目錄以 `CreateDir` 建立暫存目錄，呼叫 `clone_into`，核對暫存目錄與上層仍是建立時的身分，再以 `MoveDir` 移到正式位置（§6.3），同步點為 `SourceMoveIn`。任一步失敗時以 `RemoveTree` 刪除暫存目錄，並刪除本次建立、仍是空的上層目錄，回報 repo 的位址與原因，不建立本機設定（FR-INI-010）。
+   - 沒有指定 `repo`：來源目錄不存在時建立它；`manifest.toml` 不存在時以 `CreateFile` 建立空的 manifest（FR-INI-002）。既有的檔案不改動。
+4. 合併本機設定（FR-INI-008）：以 `TomlEditor` 解析既有的 `local.toml`（不存在時從空文字開始），只修改這次指定的值：
+   - `req.source` 有值時，寫入 `source`，以 `~/` 開頭、以 `/` 分隔。
+   - `req.tags` 加到既有的 `tags` 之後，略過已有的標籤，不移除任何標籤。
+   - `req.values` 的每一項寫入 `[values.<模組>]` 的 `<欄位>`，已有的值被取代。
+   原本不存在時以 `CreateFile` 寫入，否則以 `ReplaceFile` 取代，被取代的必須是第 1 步讀到的版本（§6.3）。設定目錄不存在時以 `ensure_private_dir` 建立。同步點為 `LocalWrite`。文字與原文相同時不寫入。
+5. 第 4 步失敗，而第 3 步取得了遠端來源時，把來源目錄移回暫存名稱並刪除，回到初始化之前的狀態，使用者可以直接重試；不這樣做，再次初始化會因 FR-INI-009 而失敗。
+6. 指定了 `repo` 而且 `req.apply` 有值時，以 `ApplyService::apply` 執行第一次套用（FR-INI-001、FR-INI-011），回報放在 `apply`。沒有指定 `repo` 時不套用（04 §2）。
+
+**前置條件**：已取得鎖定，執行檔已呼叫 `RecoveryManager::clean_stale`。
+
+**後置條件**：
+
+- 取得來源失敗時，來源目錄與本機設定都不存在或維持原狀，沒有寫入任何輸出（FR-INI-010）。
+- 第一次套用沿用一般套用的預檢、drift 與接管的處理，回報與 exit code 都與一般套用相同（FR-INI-011）。套用失敗不撤銷已完成的初始化（03 S6）。
+- `tags` 以加入的方式合併：FR-INI-008 不允許改變這次沒有指定的值，既有的標籤屬於其中。移除標籤要編輯本機設定。
+- 指定的欄位值只檢查名稱的格式；型別與欄位是否存在，由第一次套用或之後的預覽檢查（§4.6 對所有層級檢查）。
+- 所有寫入都經由 `FileSystem` 的綁定操作；git 以路徑寫入暫存目錄，這是唯一無法綁定的寫入（§6.3）。
+
+**錯誤**：
+
+| 代碼 | 情況 |
+| --- | --- |
+| `init.source-exists` | 指定遠端時，來源目錄的位置已存在（FR-INI-009） |
+| `init.layout` | 三個目錄互相包含、等於 home，或路徑中有連結（§5.2） |
+| `init.clone-failed` | git 回報失敗，附 repo 的位址、git 的 exit status 與錯誤訊息（FR-INI-010） |
+| `init.git-missing` | 找不到 `git` 執行檔 |
+| `init.stale` | clone 後暫存目錄或上層不是建立時的身分，或移入時正式位置已被占用（A7） |
+| `init.write-failed` | 建立來源目錄、manifest 或本機設定失敗，附作業系統的錯誤 |
+| `init.concurrent-edit` | 本機設定在初始化期間被修改 |
+| `docedit.mixed-line-endings`、`config.syntax` | 既有的本機設定無法編輯（§4.7） |
+
+**隱藏的設計決定**：暫存目錄的命名與清理；來源目錄移入的方式；本機設定的合併規則；git 的呼叫方式與環境變數。
 
 ## 5. 資料與檔案格式
 
