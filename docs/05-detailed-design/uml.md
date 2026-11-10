@@ -197,7 +197,7 @@ classDiagram
 
 ## 4. 詳細類別圖 D2：值的解析、範本與預檢
 
-對應 §4.4–§4.6。`TemplateValues` 只由 `PreflightChecker.check_inputs` 建立，`CompiledTemplate.render` 只接受它，未通過檢查的值因此無法進入範本。`TargetSet`、`ApplyPlan`、`StateLoadResult` 與 `FileSystem` 在 §4 後半定義，這裡只畫出依賴。
+對應 §4.4–§4.6。`TemplateValues` 只由 `PreflightChecker.check_inputs` 建立，`CompiledTemplate.render` 只接受它，未通過檢查的值因此無法進入範本。`TargetSet`、`ApplyPlan`、`StateLoadResult` 與 `FileSystem` 在 §4.10–§4.12 定義（D5、D6），這裡只畫出依賴。
 
 ```mermaid
 classDiagram
@@ -300,7 +300,7 @@ classDiagram
 
 ## 5. 詳細類別圖 D3：設定載入與管理
 
-對應 §4.3、§4.7、§4.8。`WriteLock` 只能由取得鎖定的函式建立，`ManifestService` 的每個方法都要求它。`StateStore`、`WriteLock`、`SyncHook` 與 `FileSystem` 在 §4 後半定義。
+對應 §4.3、§4.7、§4.8。`WriteLock` 只能由取得鎖定的函式建立，`ManifestService` 的每個方法都要求它。`StateStore`、`WriteLock`、`SyncHook` 與 `FileSystem` 在 §4.10、§4.11 定義（D5）。
 
 ```mermaid
 classDiagram
@@ -446,4 +446,354 @@ classDiagram
     FindResult *-- "0..*" OutputSummary
     OutputListing *-- OutputSummary
     OutputDescription *-- OutputSummary
+```
+
+## 7. 詳細類別圖 D5：檔案系統與狀態
+
+對應 §4.10、§4.11。會改變檔案的方法都要求 `WriteLock`，`WriteLock` 只能由 `acquire` 建立。綁定的操作分成 `prepare`、`execute`、`confirm` 三次呼叫，同步點落在呼叫之間（E1）。
+
+```mermaid
+classDiagram
+    direction TB
+    class FileSystem {
+        <<interface>>
+        +inspect(at, content) Result~FileInspection~
+        +list_dir(at) Result~DirEntry[]~
+        +location_key(at) Result~LocationKey~
+        +prepare_read(at) Result~Prepared~
+        +read_file(at) Result~bytes, Observation~
+        +ensure_private_dir(at) Result
+        +lock(file) Result~LockGuard~
+        +temp_name(at) HomePath
+        +append_line(lock, file, line) Result
+        +prepare(lock, op) Result~Prepared~
+    }
+    class Prepared {
+        <<interface>>
+        +execute() Result~Executed~
+    }
+    class Executed {
+        <<interface>>
+        +confirm() Result~OpOutcome~
+    }
+    class FsOp {
+        <<enumeration>>
+        CreateFile
+        ReplaceFile
+        DeleteFile
+        SetMode
+        CreateDir
+        RemoveDir
+        Capture
+        Backup
+        RestoreLink
+        MoveDir
+        RemoveTree
+    }
+    class OpOutcome {
+        +result Observation
+        +written Option~Version~
+        +captured Option~CaptureInfo~
+    }
+    class Observation {
+        +at HomePath
+        +parents Vec~FileId~
+        +entry EntryState
+    }
+    class EntryState {
+        <<enumeration>>
+        Missing
+        Present
+    }
+    class FileId {
+        +persistent() PersistentId
+        +same_device(other) bool
+    }
+    class Version {
+        +sha256 Sha256
+        +mode Option~u32~
+    }
+    class LocationKey {
+        +relation(other) Relation
+    }
+    class FsError {
+        +kind FsErrorKind
+        +at HomePath
+        +applied Applied
+    }
+    class WriteLock {
+        +acquire(fs, state_dir, diags)$ Checked~WriteLock~
+    }
+    class SyncHook {
+        <<interface>>
+        +reach(point, op, at)
+    }
+    class StateStore {
+        +load() StateLoadResult
+        +commit(lock, base, new, temp) Result~LoadedState~
+    }
+    class StateLoadResult {
+        <<enumeration>>
+        Loaded
+        Corrupt
+        Newer
+        Unreadable
+    }
+    class LoadedState {
+        +file StateFile
+        +observation Observation
+    }
+    class StateFile {
+        +records() Iterator
+        +put(record)
+        +remove(target) bool
+        +to_bytes() bytes
+    }
+    class ManagedOutputRecord {
+        +output OutputName
+        +target HomePath
+        +parent PersistentId
+        +observed ComparisonMetadata
+        +desired ComparisonMetadata
+        +forget_pending bool
+    }
+    class ComparisonMetadata {
+        +sha256 Sha256
+        +mode Option~Permissions~
+    }
+
+    FileSystem ..> FsOp : 接收
+    FileSystem ..> Prepared : 產生
+    Prepared ..> Executed : 產生
+    Executed ..> OpOutcome : 產生
+    FileSystem ..> Observation : 產生
+    FileSystem ..> LocationKey : 產生
+    FileSystem ..> FsError : 失敗時
+    FileSystem ..> WriteLock : 寫入時要求
+    WriteLock ..> FileSystem : 建立時使用
+    OpOutcome *-- Observation
+    Observation *-- EntryState
+    Observation *-- "0..*" FileId
+    EntryState --> Version
+    StateStore ..> FileSystem
+    StateStore ..> SyncHook
+    StateStore ..> StateLoadResult : 產生
+    StateLoadResult --> LoadedState
+    LoadedState *-- StateFile
+    LoadedState *-- Observation
+    StateFile *-- "0..*" ManagedOutputRecord
+    ManagedOutputRecord *-- "2" ComparisonMetadata
+```
+
+## 8. 詳細類別圖 D6：規劃、執行與回復
+
+對應 §4.12–§4.15，細化 03 的 C3 與 C4 的套用部分。`DesiredContent` 只由 `Planner` 建立，`ApprovedPlan` 只由 `ApplyService` 在預檢與模式檢查通過後建立；`Executor` 只接收 `ApprovedPlan`，只寫入 `DesiredContent` 的位元組。
+
+```mermaid
+classDiagram
+    direction TB
+    class ApplyService {
+        +preview(req, diags) Checked~ApplyPlan~
+        +apply(lock, req, diags) Checked~ApplyReport~
+    }
+    class ApplyRequest {
+        +choices Choices
+        +diff bool
+        +started_at SystemTime
+    }
+    class Planner {
+        +targets(config, enabled) TargetSet
+        +plan(input, diags) Checked~ApplyPlan~
+    }
+    class TargetSet {
+        +entries Vec~TargetEntry~
+        +reserved Vec
+    }
+    class ApplyPlan {
+        +items() PlanItem[]
+        +drift_conflicts() Iterator
+        +strict_blocked() bool
+        +state() LoadedState
+    }
+    class ApprovedPlan
+    class PlanItem {
+        +output OutputName
+        +target HomePath
+        +origin ItemOrigin
+        +action Action
+        +disposition Disposition
+        +drift bool
+        +observation Observation
+        +desired Option~DesiredContent~
+        +record_before Option~ManagedOutputRecord~
+        +record RecordChange
+    }
+    class Action {
+        <<enumeration>>
+        Create
+        Update
+        Delete
+        Unchanged
+    }
+    class Disposition {
+        <<enumeration>>
+        Proceed
+        Takeover
+        Resolve(Choice)
+        Retain(RetainReason)
+    }
+    class RecordChange {
+        <<enumeration>>
+        Keep
+        Remove
+        Put
+    }
+    class DesiredContent {
+        +bytes() bytes
+        +metadata() ComparisonMetadata
+    }
+    class PreflightChecker
+    class Executor {
+        +execute(lock, plan, started_at, diags) ApplyReport
+    }
+    class RecoveryManager {
+        +begin(fs, layout, sync, lock, started_at, state)$ Result
+        +temp_name(at) Result~HomePath~
+        +capture(expect, content) Result~SnapshotId~
+        +record(done)
+        +rollback(diags) RecoveryReport
+        +finish(diags)
+        +clean_stale(fs, layout, lock, diags)$
+    }
+    class ApplyReport {
+        +batch Option~BatchId~
+        +items Vec~ItemResult~
+        +failure Option~ExecError~
+        +recovery Option~RecoveryReport~
+        +outcome() ApplyOutcome
+    }
+    class ItemResult {
+        +target HomePath
+        +action Action
+        +status ItemStatus
+        +backup Option~HomePath~
+    }
+    class RecoveryReport {
+        +failures Vec~RecoveryFailure~
+        +state StateRecovery
+    }
+    class StateStore
+    class FileSystem {
+        <<interface>>
+    }
+
+    ApplyService ..> ApplyRequest
+    ApplyService ..> Planner
+    ApplyService ..> PreflightChecker
+    ApplyService ..> Executor
+    ApplyService ..> StateStore : 載入
+    ApplyService ..> ApprovedPlan : 建立
+    Planner ..> TargetSet : 產生
+    Planner ..> ApplyPlan : 產生
+    Planner ..> DesiredContent : 建立
+    Planner ..> FileSystem : 只讀
+    PreflightChecker ..> TargetSet
+    PreflightChecker ..> ApplyPlan
+    ApprovedPlan *-- ApplyPlan
+    ApplyPlan *-- "0..*" PlanItem
+    PlanItem --> Action
+    PlanItem --> Disposition
+    PlanItem --> RecordChange
+    PlanItem *-- "0..1" DesiredContent
+    Executor ..> ApprovedPlan
+    Executor ..> RecoveryManager
+    Executor ..> StateStore : 提交
+    Executor ..> FileSystem
+    Executor ..> ApplyReport : 產生
+    RecoveryManager ..> FileSystem
+    RecoveryManager ..> RecoveryReport : 產生
+    ApplyReport *-- "0..*" ItemResult
+    ApplyReport *-- "0..1" RecoveryReport
+```
+
+## 9. 詳細類別圖 D7：初始化
+
+對應 §4.16。`GitClient` 只把 repo clone 到 `InitializationService` 經由 `FileSystem` 建立的暫存目錄；第一次套用重用 `ApplyService`。
+
+```mermaid
+classDiagram
+    direction LR
+    class InitializationService {
+        +initialize(lock, req, diags) Checked~InitializationResult~
+    }
+    class InitializationRequest {
+        +repo Option~String~
+        +source Option~PathBuf~
+        +tags Vec~Tag~
+        +values Vec~FieldRef, RawValue~
+        +apply Option~ApplyRequest~
+    }
+    class InitializationResult {
+        +source HomePath
+        +source_created bool
+        +changes Vec~FileChange~
+        +apply Option~ApplyReport~
+    }
+    class GitClient {
+        <<interface>>
+        +clone_into(url, dest) Result
+    }
+    class ApplyService
+    class ConfigLoader
+    class TomlEditor
+    class Layout
+    class FileSystem {
+        <<interface>>
+    }
+    class WriteLock
+
+    InitializationService ..> InitializationRequest
+    InitializationService ..> InitializationResult : 產生
+    InitializationService ..> GitClient : clone
+    InitializationService ..> FileSystem : 暫存目錄、移入、本機設定
+    InitializationService ..> ConfigLoader : 讀取本機設定
+    InitializationService ..> TomlEditor : 合併本機設定
+    InitializationService ..> Layout
+    InitializationService ..> ApplyService : 第一次套用
+    InitializationService ..> WriteLock : 要求
+```
+
+## 10. 循序圖 E1：一個項目的執行
+
+對應 §4.10、§4.13、§4.14 與 §6.6，以「更新」為例。同步點（§8.2）以 `SyncHook` 的呼叫表示；任一步失敗時停止，交給 `RecoveryManager.rollback`。
+
+```mermaid
+sequenceDiagram
+    participant E as Executor
+    participant R as RecoveryManager
+    participant F as FileSystem
+    participant H as SyncHook
+    E->>R: temp_name(target)
+    R->>F: append_line(journal)
+    R-->>E: 暫存檔名稱
+    E->>R: capture(observation, true)
+    R->>F: prepare(Capture)
+    F-->>R: Prepared（已核對父目錄與目標）
+    R->>H: reach(BeforeCapture, Capture)
+    R->>F: execute()
+    F-->>R: 副本與實際讀到的 SHA-256
+    R->>H: reach(AfterCapture, Capture)
+    R->>R: SHA-256 與觀測的版本比較
+    R->>F: confirm()
+    R-->>E: SnapshotId
+    E->>F: prepare(ReplaceFile)
+    F-->>E: Prepared
+    E->>H: reach(BeforeOperation, Replace)
+    E->>F: execute()
+    F-->>E: Executed（交換後已核對舊檔）
+    E->>H: reach(AfterOperation, Replace)
+    E->>F: confirm()
+    F-->>E: OpOutcome（結果的觀測、寫入的版本）
+    E->>E: 寫入的版本與 DesiredContent 比較
+    E->>R: record(Replaced)
 ```
