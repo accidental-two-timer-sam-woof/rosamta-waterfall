@@ -185,9 +185,10 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 
 | 層 | module | 03 的類別與型別 | 責任 | 可依賴 |
 | --- | --- | --- | --- | --- |
-| 0 基礎 | `diag` | `Diagnostics` | 診斷與來源位置（檔案、行、欄），所有 module 共用 | — |
-| 0 | `host` | `HostContext`、`Platform` | 主機資訊與環境變數的快照 | `diag` |
-| 0 | `path` | 目標路徑的型別 | `~` 與環境變數的展開、home 內的相對路徑、路徑比較（§6） | `diag`、`host` |
+| 0 基礎 | `diag` | `Diagnostics` | 診斷、來源位置（檔案、行、欄）與 `Located`，所有 module 共用 | `name`、`path` |
+| 0 | `name` | — | 有格式限制的名稱與 `FieldRef`（§4.1），以及權限位元 `Permissions`（§5.4） | — |
+| 0 | `host` | `HostContext`、`Platform` | 主機資訊與環境變數的快照 | — |
+| 0 | `path` | 目標路徑的型別 | `~` 與環境變數的展開、home 內的相對路徑、路徑比較（§6） | `host` |
 | 0 | `fs` | `FileSystem`、`FileInspection` | trait，以及它使用的檔案身分、類型、內容指紋與目錄 handle；鎖定 `WriteLock`；同步點與 `SyncHook` trait（§8.2） | `diag`、`path` |
 | 0 | `layout` | `Layout` | 程式使用的位置（§5.1）與保留位置（§5.2） | `diag`、`host`、`path` |
 | 1 資料 | `config` | `ConfigLoader`、`EffectiveConfig`、`Manifest`、`OutputDefinition`、`ModuleDecl`、`FieldDecl`、`Assignment`、`Profile`、`ProfileRule`、`LocalSettings`、`TemplateRef` | 讀取四種設定檔與內建資源，合併內建輸出與覆寫（§5.3–§5.9） | 第 0 層 |
@@ -212,7 +213,7 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 - `ManifestService` 使用 `config` 取得內建輸出的名稱，使用 `docedit` 修改設定檔。C4 只畫出 `StateStore` 與 `FileSystem`。
 - 摘要（FR-QRY-005）是 `ApplyService` 的一種模式，不屬於 `QueryService`，因為它與預覽共用 `Planner`（§1.2）。
 
-依賴方向由 module 的 `use` 決定，編譯器不會檢查層級。§11 逐一核對每個 module 的 `use`，CI 另以腳本檢查 core 各 module 引用的 `crate::` 路徑都在上表的範圍內。
+依賴方向由 module 的 `use` 決定，編譯器不會檢查層級。§11 依 §4 的介面核對每個 module 的依賴，並以 core 的測試檢查各 module 引用的 `crate::` 路徑都在上表的範圍內（§11.3）。
 
 ### 3.3 platform 與執行檔的 module
 
@@ -240,7 +241,7 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | C1 `sourceKind` 與 `sourcePath` | 一個 enum `SourceSpec` | 範本與原樣複製只能選一種，以型別排除兩者都有或都沒有的情況 |
 | C1 `Template` | 來源 `TemplateRef` 與中繼資料 `TemplateMeta` | 中繼資料寫在範本裡（§5.9），讀到範本才知道 |
 | C2 `ResolvedValues.values` 為 `FieldValue` | 存未檢查的 `RawValue`，檢查後才轉成 `TemplateValues` | 04 §2 把型別檢查交給 `PreflightChecker`；以型別保證未通過檢查的值不會進入範本 |
-| C4 `ConfigLoader.load()` | `load_local` 與 `load` | 來源目錄的位置記在本機設定（§5.1），必須先讀本機設定 |
+| C4 `ConfigLoader.load()` | `load_local`、`load_layout` 與 `load` | 來源目錄的位置記在本機設定（§5.1），必須先讀本機設定 |
 | C4 `PreflightChecker.validate(context, optionalPlan)` | `check_inputs`、`check_targets`、`check_plan` 三個階段 | 三個階段需要的資料不同。USE-004 要求欄位值有錯時仍找出目標碰撞，碰撞的檢查因此不能等到渲染之後 |
 | C4 `QueryService` | 加上 `list_outputs` | FR-MAN-026 的列出輸出是唯讀的，與其他查詢共用 Profile 判定 |
 | C4 管理方法的參數 | 加上 `&WriteLock`；`add` 改收 `AddRequest` | 以型別確保修改前已取得鎖定（§6.7）；納入時可以指定輸出名稱 |
@@ -318,6 +319,8 @@ impl std::str::FromStr for OutputName { type Err = NameError; /* … */ }
 
 pub struct Located<T> { pub value: T, pub at: SourceLocation }
 ```
+
+名稱型別與 `Permissions` 放在 `name` module，`Located` 放在 `diag`（§3.2）。`state` 的紀錄與 `diag` 的 `Subject` 都使用名稱，所以名稱不能放在第 1 層的 `config`。
 
 **路徑**（`path`）：§6.1 的展開與正規化，以三種型別區分處理的階段。
 
@@ -417,7 +420,7 @@ pub struct OutputDefinition {
 pub enum SourceSpec { Template(TemplateRef), Verbatim(SourceRelPath) }
 pub enum TemplateRef { Builtin(BuiltinTemplate), User(SourceRelPath) }
 pub enum Ownership { Full, CreateOnly }      // FR-MAN-012、FR-MAN-013
-pub struct Permissions(u16);                 // 0..=0o777（§5.4）
+pub struct Permissions(u16);                 // 0..=0o777（§5.4）；定義在 name（§3.2）
 
 pub struct PlatformTargets { linux: Option<Located<RawPath>>,
                              macos: Option<Located<RawPath>>,
@@ -560,8 +563,8 @@ impl Layout {
     pub fn config_dir(host: &HostContext, diags: &mut Diagnostics) -> Checked<HomePath>;
     /// 狀態目錄，依 XDG_STATE_HOME 或預設位置。取得鎖定前使用（§6.7）。
     pub fn state_dir(host: &HostContext, diags: &mut Diagnostics) -> Checked<HomePath>;
-    /// 三個目錄，來源目錄依本機設定的 source。
-    pub fn new(host: &HostContext, local: &LocalSettings, diags: &mut Diagnostics) -> Checked<Layout>;
+    /// 三個目錄，來源目錄依本機設定的 source；未設定時為 None。
+    pub fn new(host: &HostContext, source: Option<&Located<RawPath>>, diags: &mut Diagnostics) -> Checked<Layout>;
     /// 指定來源目錄；初始化使用（§4.16）。
     pub fn with_source(host: &HostContext, source: HomePath, diags: &mut Diagnostics) -> Checked<Layout>;
     pub fn local_settings(&self) -> HomePath;   // <設定目錄>/local.toml
@@ -570,6 +573,7 @@ impl Layout {
     pub fn modules(&self) -> HomePath;
     pub fn state_file(&self) -> HomePath;
     pub fn lock_file(&self) -> HomePath;
+    pub fn txn_root(state_dir: &HomePath) -> HomePath;     // <狀態目錄>/txn
     pub fn txn_dir(&self, batch: &BatchId) -> HomePath;     // <狀態目錄>/txn/<批次編號>
     pub fn backup_dir(&self, batch: &BatchId) -> HomePath;  // <狀態目錄>/backups/<批次編號>
     pub fn reserved(&self) -> Vec<Reserved>;    // §5.2 的保留位置
@@ -587,6 +591,9 @@ impl<'a> ConfigLoader<'a> {
     /// 讀取 <設定目錄>/local.toml。不存在時回傳空的本機設定。
     pub fn load_local(&self, config_dir: &HomePath, diags: &mut Diagnostics)
         -> Checked<LocalSettings>;
+
+    /// 依序呼叫 Layout::config_dir、load_local 與 Layout::new。
+    pub fn load_layout(&self, diags: &mut Diagnostics) -> Checked<(LocalSettings, Layout)>;
 
     /// 讀取來源目錄。永遠回傳結果；有錯誤的部分不進入結果，記在 diags。
     pub fn load(&self, layout: &Layout, diags: &mut Diagnostics) -> EffectiveConfig;
@@ -612,7 +619,7 @@ pub mod schema {
 
 `ConfigLoader` 以 `schema::keys` 判定不認得的鍵，並列出該位置可用的鍵（FR-MAN-029）；`schema` 子指令以同一份資料產生說明（IF-005、§9.9）。說明與實際接受的鍵因此出自同一個來源。
 
-呼叫順序：`Layout::config_dir` → `load_local` → `Layout::new` → `load`。`layout` 在第 0 層，不能使用 `FileSystem`，所以 `Layout::new` 只做文字的處理；三個目錄是否互相包含要依 §6.2 的位置鍵判定，由初始化負責（§5.2、§4.16）。
+呼叫順序：`load_layout` → `load`。`load_layout` 把 `Layout::config_dir` → `load_local` → `Layout::new` 的順序寫在一處，套用、管理與查詢都呼叫它；初始化的來源目錄可能由參數指定，另以 `load_local` 與 `Layout::with_source` 建立（§4.16）。`layout` 在第 0 層，不能使用 `config` 的 `LocalSettings` 與 `FileSystem`，所以 `Layout::new` 只接收 `source` 的值，只做文字的處理；三個目錄是否互相包含要依 §6.2 的位置鍵判定，由初始化負責（§5.2、§4.16）。
 
 **前置條件**：會寫入的子指令已取得鎖定（§6.7），讀到的檔案在指令結束前不會被其他 rosamta 程序改寫。預覽與查詢不取得鎖定，讀到的是當下的檔案。
 
@@ -769,7 +776,7 @@ pub enum LoadedSource {
 }
 ```
 
-**前置條件**：`render` 的 `values` 已通過 `check_inputs`。`TemplateValues` 的建構函式是 `pub(crate)`，core 中只有 `check_inputs` 呼叫它，§11 逐一核對；core 以外的程式無法建立它。
+**前置條件**：`render` 的 `values` 已通過 `check_inputs`。`TemplateValues` 的建構函式是 `pub(crate)`，core 中只有 `check_inputs` 呼叫它，由 §11.3 的測試檢查；core 以外的程式無法建立它。
 
 **後置條件**：
 
@@ -926,7 +933,7 @@ impl TomlEditor {
 
 **後置條件**：§5.3 的編輯規則全部在這裡實作：修改值時沿用原值的 decor；修改 inline table 中的鍵時維持 inline table；CRLF 的檔案先轉成 LF 再轉回；保留 BOM；新增的鍵沿用同一表格最後一個鍵的縮排；新增的表格加在檔案結尾，前面空一行；移除表格時一併移除上方的註解。`to_text` 與原文相比，只有被修改的鍵、表格所在的行不同。pilot P4 的案例改寫成這個型別的單元測試。
 
-**錯誤**：`docedit.mixed-line-endings`（混用換行，指出第一個不同的行）；`config.syntax`（無法解析）。
+**錯誤**：`config.mixed-line-endings`（混用換行，指出第一個不同的行）；`config.syntax`（無法解析）。
 
 **隱藏的設計決定**：toml_edit 的 decor 與表格位置的處理，以及 §5.3 第 3、4 點的換行與縮排規則。
 
@@ -1027,7 +1034,7 @@ pub struct OperationResult {
 | `manage.invalid-patch` | 修改的值不合法，或 `Reset` 必要的屬性 |
 | `manage.concurrent-edit` | manifest 或狀態檔在指令執行期間被修改 |
 | `manage.write-failed` | 寫入失敗，附作業系統的錯誤；說明已建立的副本是否已刪除 |
-| `docedit.mixed-line-endings`、`preflight.state` | 見 §4.7、§4.6 |
+| `config.mixed-line-endings`、`preflight.state` | 見 §4.7、§4.6 |
 
 **隱藏的設計決定**：輸出名稱與來源副本名稱的產生規則；寫入的順序與失敗時的處理；停止管理的三個步驟。
 
@@ -1501,7 +1508,7 @@ C3 以字串表示的 `action`、`disposition`、`reason` 改成 enum，`reason`
 
 **期望內容與 Executor 的傳遞契約**（03 C3 末段、04 §2）：
 
-- 執行期參照就是 `DesiredContent`：規劃時把渲染結果或原樣複製來源的位元組放進記憶體，同時計算 SHA-256。`DesiredContent` 的建構函式是 `pub(crate)`，core 中只有 `Planner` 呼叫它（§11 核對），所以內容一定來自預檢時的那一次讀取或渲染。
+- 執行期參照就是 `DesiredContent`：規劃時把渲染結果或原樣複製來源的位元組放進記憶體，同時計算 SHA-256。`DesiredContent` 的建構函式是 `pub(crate)`，core 中只有 `Planner` 呼叫它（§11.3 的測試檢查），所以內容一定來自預檢時的那一次讀取或渲染。
 - `Executor` 只寫入 `desired.bytes()`，不讀取來源、不渲染（A24）。寫入後以 `OpOutcome::written` 核對 `metadata().sha256`；不同時是執行錯誤（§4.14）。內容無法取得的情況因此只剩寫入途中損毀，§8.3 以 `FaultFs` 注入。
 - 狀態檔只記錄 `metadata()`，不記錄 `bytes()`（SEC-001）。
 - `observation` 是執行時每個操作的 `expect`。`Executor` 不重新觀測後再決定動作：動作由計畫決定，執行時只核對觀測是否仍然成立。
@@ -1542,12 +1549,12 @@ impl<'a> RecoveryManager<'a> {
     /// §6.6 步驟 1：選定批次編號、建立 txn/<批次編號>/，狀態檔存在時擷取它的快照。
     pub fn begin(fs: &'a dyn FileSystem, layout: &'a Layout, sync: &'a dyn SyncHook,
                  lock: &'a WriteLock, started_at: SystemTime, state: &LoadedState)
-        -> Result<Self, ExecError>;
+        -> Result<Self, FsError>;
     pub fn batch(&self) -> &BatchId;
     /// 取得暫存檔名稱，先附加到 journal（§6.5）。
-    pub fn temp_name(&mut self, at: &HomePath) -> Result<HomePath, ExecError>;
+    pub fn temp_name(&mut self, at: &HomePath) -> Result<HomePath, FsError>;
     /// 擷取快照（§6.5 第 1–3 步）。content 為 false 時不開檔，只記下觀測中的權限（只變更權限的項目）。
-    pub fn capture(&mut self, expect: &Observation, content: bool) -> Result<SnapshotId, ExecError>;
+    pub fn capture(&mut self, expect: &Observation, content: bool) -> Result<SnapshotId, FsError>;
     /// 記下一個已生效的操作，以及回復它需要的資料。
     pub fn record(&mut self, done: Done);
     pub fn rollback(self, diags: &mut Diagnostics) -> RecoveryReport;
@@ -1555,9 +1562,9 @@ impl<'a> RecoveryManager<'a> {
     pub fn finish(self, diags: &mut Diagnostics);
 
     /// 取得鎖定後、規劃前，清理殘留的批次目錄（§6.5）。由執行檔呼叫。
-    pub fn clean_stale(fs: &dyn FileSystem, layout: &Layout, lock: &WriteLock, diags: &mut Diagnostics);
+    pub fn clean_stale(fs: &dyn FileSystem, host: &HostContext, lock: &WriteLock, diags: &mut Diagnostics);
     /// 不取得鎖定的指令：只提示殘留的批次目錄，不刪除。
-    pub fn report_stale(fs: &dyn FileSystem, layout: &Layout, diags: &mut Diagnostics);
+    pub fn report_stale(fs: &dyn FileSystem, host: &HostContext, diags: &mut Diagnostics);
 }
 
 pub enum Done {
@@ -1591,9 +1598,10 @@ pub struct RecoveryFailure {
 - `capture` 以 `FsOp::Capture` 寫入 `txn/<批次編號>/<序號>`，比較 `CaptureInfo::sha256` 與 `expect` 的版本，再 `confirm`。三步都通過才回傳 `SnapshotId`；版本不符時刪除副本，回傳觀測失效（A16）。
 - `rollback` 依 §6.6 的回復表，以與 `record` 相反的順序處理每一個 `Done`，最後處理狀態檔。到達 `BeforeRollback` 一次，每個操作在 `BeforeOperation`、`AfterOperation`（`Revert*`、`StateRollback`）到達同步點。使用快照前，以 `Source::Snapshot` 邊讀邊核對 SHA-256（A16）。一項失敗時記下原因，繼續下一項（04 §3.3）。回復成功的接管項目，刪除它的備份；無法回復的，保留備份並列在 `RecoveryFailure::backup`（§5.12）。
 - `rollback` 與 `finish` 都依 §6.5 清理 journal 中的暫存檔與批次目錄，`rollback` 另外移除變空的 `backups/<批次編號>/`。清理失敗只以警告 `apply.cleanup` 回報，不改變結果（04 §3.3）。
+- `clean_stale` 與 `report_stale` 以 `Layout::state_dir`、`Layout::config_dir` 與 `Layout::txn_root` 找出位置，不需要來源目錄，所以初始化在決定來源目錄之前也能呼叫。
 - `clean_stale` 依每個殘留批次目錄中的 journal 清理（§6.5），以警告 `apply.stale-batch` 說明該批次沒有正常結束。狀態目錄與設定目錄最上層、名稱含 `.rosamta-tmp.` 的項目，是管理與初始化留下的暫存檔，一併刪除；來源目錄中的不刪除，因為來源目錄由使用者以 git 管理，這類檔案會出現在 `git status` 中。
 
-**錯誤**：`ExecError`（§4.14）；`RecoveryFailureKind` 的每個值有固定的字串：`recovery.changed`（回復前的核對不符）、`recovery.snapshot-mismatch`、`recovery.occupied`（位置已被占用，A22）、`recovery.failed`（附作業系統的錯誤）。警告：`apply.cleanup`、`apply.stale-batch`。
+**錯誤**：`begin`、`temp_name`、`capture` 回傳 `FsError`，觀測失效為 `FsErrorKind::Stale`，由 `Executor` 加上項目轉成 `ExecError`（§4.14）。`ExecError` 定義在 `exec`，而 `exec` 依賴 `recovery`，`recovery` 因此不使用它。`RecoveryFailureKind` 的每個值有固定的字串：`recovery.changed`（回復前的核對不符）、`recovery.snapshot-mismatch`、`recovery.occupied`（位置已被占用，A22）、`recovery.failed`（附作業系統的錯誤）。警告：`apply.cleanup`、`apply.stale-batch`。
 
 **隱藏的設計決定**：快照的命名與保存位置；journal 的格式；回復的順序；備份在回復後的處理。
 
@@ -1604,7 +1612,7 @@ pub struct RecoveryFailure {
 **介面**（`exec`）：
 
 ```rust
-/// 通過 check_plan 與模式檢查的計畫。建構函式是 pub(crate)，只有 ApplyService 建立（§11 核對）。
+/// 通過 check_plan 與模式檢查的計畫。建構函式是 pub(crate)，只有 ApplyService 建立（§11.3 的測試檢查）。
 pub struct ApprovedPlan(ApplyPlan);
 
 pub struct Executor<'a> {
@@ -1682,6 +1690,7 @@ C3 的 `ApplyReport.exitCode` 改為 `outcome()`：core 不決定 exit code，§
 - 步驟 3、5 的核對以 `inspect` 進行：寫入的項目核對身分與 `written`；刪除的項目核對仍不存在，父目錄相同；其他項目核對身分、版本與宣告的權限仍與 `observation` 相同。狀態檔核對身分與版本。
 - 任何一步失敗，停止處理後續項目，呼叫 `rollback`。失敗的項目為 `Failed`，已處理的項目依回復結果為 `Reverted` 或 `NotReverted`，未處理的為 `NotRun`，保留的項目仍為 `Retained`。drift 衝突與未授權的接管不是執行錯誤，不觸發回復（03 S5）。
 - `outcome()`：有 `failure` 為 `Failed`；否則沒有保留項目為 `Completed`（包括空計畫，FR-APL-006）；有完成也有保留為 `Partial`（FR-APL-007）；只有保留為 `Failed`（FR-APL-008）。「不變」算完成。
+- `RecoveryManager` 回傳的 `FsError` 轉成 `ExecError`：`Stale` 為 `ExecErrorKind::Stale`，其他為 `Fs`，`item` 是正在處理的項目。
 - `ExecErrorKind` 的每個值有固定的字串，見上方的註解。
 
 **隱藏的設計決定**：每個項目的操作順序；何時開始批次；新狀態的組合方式；完成與回復時各項目狀態的判定。
@@ -1713,7 +1722,7 @@ C4 的 `run(request)` 分成 `preview` 與 `apply`：只有套用要求 `&WriteL
 
 **流程**：兩個方法共用第 1–8 步：
 
-1. `Layout::config_dir` → `ConfigLoader::load_local` → `Layout::new` → `ConfigLoader::load`。
+1. `ConfigLoader::load_layout` → `ConfigLoader::load`。
 2. `StateStore::load`。
 3. `ValueResolver::resolve`；`Profile::enabled`。
 4. 對 manifest 中每個啟用的輸出呼叫 `SourceLoader::load`。
@@ -1820,7 +1829,7 @@ platform 的實作以 `std::process` 執行 `git clone -- <url> <dest>`：`--` �
 | `init.stale` | clone 後暫存目錄或上層不是建立時的身分，或移入時正式位置已被占用（A7） |
 | `init.write-failed` | 建立來源目錄、manifest 或本機設定失敗，附作業系統的錯誤 |
 | `init.concurrent-edit` | 本機設定在初始化期間被修改 |
-| `docedit.mixed-line-endings`、`config.syntax` | 既有的本機設定無法編輯（§4.7） |
+| `config.mixed-line-endings`、`config.syntax` | 既有的本機設定無法編輯（§4.7） |
 
 **隱藏的設計決定**：暫存目錄的命名與清理；來源目錄移入的方式；本機設定的合併規則；git 的呼叫方式與環境變數。
 
@@ -2794,12 +2803,12 @@ IF-001 的每項操作是 `rosamta` 的一個子指令。預覽、摘要與套�
 
 1. 解析參數。`help`、`--help`、`--version` 與 `schema` 到此輸出並結束，不收集主機資訊，不讀取任何檔案（IF-002）。
 2. 以 platform 收集 `HostContext`，建立 platform 的 `FileSystem` 與 `GitClient`；`SyncHook` 使用 `NoSync`。
-3. 會寫入的子指令（`init`、`apply`、`add`、`modify`、`forget`）依序呼叫 `Layout::state_dir`、`WriteLock::acquire`；再以 `Layout::config_dir`、`load_local` 與 `Layout::new` 建立 `Layout`，呼叫 `RecoveryManager::clean_stale`。`init` 的 `Layout` 依 `--source` 決定，規則與 §4.16 第 1 步相同。其他子指令以同樣的方式建立 `Layout`，呼叫 `report_stale`。
+3. 會寫入的子指令（`init`、`apply`、`add`、`modify`、`forget`）依序呼叫 `Layout::state_dir`、`WriteLock::acquire` 與 `RecoveryManager::clean_stale`。其他子指令呼叫 `report_stale`。
 4. 呼叫 core：
    - `diff`、`status`、`apply`：`ApplyRequest` 的 `started_at` 是執行檔取得的目前時間，core 不讀取時間（§8.1）。
    - `init`：`InitializationService::initialize`，第一次套用的請求同上。
-   - `add`、`modify`、`forget`：以第 3 步的 `Layout` 建立 `StateStore` 與 `ManifestService`。不載入其他設定檔，因為其他設定檔的錯誤不影響管理指令（§4.8）。
-   - `query`、`list`：`ConfigLoader::load`；`is_complete()` 為 `false` 時到此結束（§4.9）。否則以 `ValueResolver::resolve`、`TemplateEngine` 與 `SourceLoader` 建立 `QueryService`。
+   - `add`、`modify`、`forget`：以 `ConfigLoader::load_layout` 取得 `Layout`，建立 `StateStore` 與 `ManifestService`。不載入其他設定檔，因為其他設定檔的錯誤不影響管理指令（§4.8）。
+   - `query`、`list`：`ConfigLoader::load_layout` → `load`；`is_complete()` 為 `false` 時到此結束（§4.9）。否則以 `ValueResolver::resolve`、`TemplateEngine` 與 `SourceLoader` 建立 `QueryService`。
 5. 結果寫到標準輸出，診斷依加入的順序寫到標準錯誤（IF-008），再依 §9.7 結束。
 
 ### 9.4 標準輸出
@@ -2865,7 +2874,7 @@ error[preflight.collision]: outputs "nvim" and "nvim-work" have the same target 
 
 | 前綴 | 階段 | 定義 |
 | --- | --- | --- |
-| `config.` | 讀取設定檔 | §4.3 |
+| `config.` | 讀取與編輯設定檔 | §4.3、§4.7 |
 | `values.` | 覆寫層級的解析 | §4.4 |
 | `template.` | 範本與原樣複製來源 | §4.5 |
 | `preflight.` | 預檢 | §4.6 |
@@ -2875,7 +2884,6 @@ error[preflight.collision]: outputs "nvim" and "nvim-work" have the same target 
 | `query.` | 查詢 | §4.9 |
 | `init.` | 初始化 | §4.16 |
 | `lock.` | 鎖定 | §4.10 |
-| `docedit.` | 保留格式的編輯 | §4.7 |
 
 **執行錯誤與回復**：`Executor` 不以診斷回報執行錯誤（§4.15），由執行檔把 `ApplyReport` 轉成診斷：
 
@@ -3048,3 +3056,94 @@ Command 不在 Valente Ch.6 介紹的模式中，名稱取自 GoF。回復快照
 | Visitor | 計畫的項目、設定值與診斷都以 enum 表示，以 `match` 處理每一種情況。新增一個值時，編譯器指出每個沒有處理它的 `match`，不需要 Visitor 的雙重分派 |
 | Strategy | 規則的變化，例如 drift 的處理方式與嚴格模式，是 `Choices` 中的資料，由 `Planner` 依 §5.11 判定（§4.12）。處理方式只有固定的幾種，也不開放使用者擴充，寫成可替換的物件只會把判定分散到多個類別 |
 | Builder | 請求型別的欄位少，而且都是必填或有明確的預設值，以結構直接建立即可 |
+
+## 11. 設計原則檢核
+
+本節依 Valente Ch.5 的設計原則檢查 §3、§4 與 §9：conceptual integrity、資訊隱藏、內聚、耦合與 SOLID。發現的問題已回頭修改相關章節，列在 §11.4；考慮過但不修改的，也在 §11.4 說明理由。
+
+### 11.1 Conceptual integrity
+
+Valente 以 conceptual integrity 指系統的一致性：同類的問題以同一種方式解決，使用者與開發者學會一處，就能預期其他地方。本設計遵守下列規則：
+
+| 規則 | 範圍與例外 | 檢查方式 |
+| --- | --- | --- |
+| 使用者輸入的問題一律以 `Diagnostic` 回報；`FsError` 只在 core 內部，由使用它的類別轉成自己的代碼；執行錯誤記在 `ApplyReport`，由執行檔轉成診斷（§9.5）。panic 只表示程式本身的錯誤 | 內建資源的錯誤是程式的錯誤，以 panic 處理（§4.2） | review；core 啟用 clippy 的 `unwrap_used` 與 `expect_used`，維持內部不變量的 `expect` 須加 `allow` 並寫出理由 |
+| 所有寫入都是依觀測核對的綁定操作（§6.3）：輸出、狀態檔、manifest、本機設定、來源副本與暫存目錄 | git 以路徑寫入暫存目錄（§4.16）；`ensure_private_dir` 在取得鎖定前建立狀態目錄（§4.10） | 會改變檔案的 `FileSystem` 方法都要求 `&WriteLock`；core 禁用 `std::fs`（§11.3） |
+| 前置條件以型別表示（§10.2） | — | 編譯器；建構函式的限制見 §11.3 |
+| 每條規則只寫在一處：Profile 的判定在 `ProfileRule::matches`；覆寫層級在 `ValueResolver`；路徑的正規化在 `path`；位置的比較在 `LocationKey::relation`；§5.11 的判定在 `Planner`；讀取設定的順序在 `ConfigLoader::load_layout`；接受的鍵在 `config::schema`；exit code 在執行檔（§9.7）；JSON 的欄位在 `output::json` | — | review；§11.3 的 module 依賴檢查讓其他 module 無法引用這些規則的內部 |
+| 外部套件與平台 API 只出現在一個 module：TOML 在 `config` 與 `docedit`，MiniJinja 在 `template`，系統呼叫在 platform，參數解析在執行檔的 `cli` | `serde_json` 用在 `state` 的狀態檔與執行檔的 JSON 輸出，兩者的格式互不相關 | 各 crate 的 `Cargo.toml` 只列需要的套件（§3.1）；module 依賴檢查 |
+| 主機資訊、環境變數、時間、檔案系統與 git 都由呼叫端傳入，core 不自行取得（§8.1） | — | clippy 的 `disallowed-methods`、`disallowed-types`（§11.3） |
+| 命名一致：代碼為 `<階段>.<kebab-case>`（§9.5）；enum 的字串為 kebab-case，文字與 JSON 相同（§9.6）；home 內的路徑在文字中寫成 `~/`，在 JSON 中是絕對路徑；用語與 SRS §1.3 相同 | — | review；JSON 範例的比對（§9.6） |
+| 依賴方向依 §3.2 的分層 | — | module 依賴檢查（§11.3） |
+
+### 11.2 類別檢查表
+
+用語依 Valente Ch.5：
+
+- **內聚**：類別的方法與資料都服務同一個責任。
+- **耦合**：類別依賴其他類別的程度。依賴穩定的公開介面是可接受的耦合；依賴其他類別的內部細節或全域狀態是不良的耦合。
+- **SOLID**：單一責任（SRP）、介面隔離（ISP）、依賴反轉（DIP）、開放封閉（OCP）、Liskov 替換（LSP）。
+- **Demeter 法則**：只呼叫直接取得的物件的方法，不經由它們深入其他物件。
+
+本設計沒有實作繼承，介面只有 trait，「優先使用組合而非繼承」自然成立；LSP 只適用於 trait 的多個實作。表中「依賴」只列 workspace 內的類別與 trait，診斷與名稱等共用型別不列。
+
+| 類別 | 內聚 | 依賴 | SOLID 與 Demeter | 結果 |
+| --- | --- | --- | --- | --- |
+| `ConfigLoader` | 所有方法都是「從設定檔得到 `EffectiveConfig`」 | `FileSystem`、`HostContext`、`Layout`、`config::schema` | SRP：改變的原因只有設定格式。OCP：新增鍵時改 `schema` 與讀取它的程式 | 修正後通過（D5） |
+| `Layout` | 只計算位置 | `HostContext`、`RawPath` | — | 修正後通過（D3） |
+| `ValueResolver` | 一個無狀態的函式 | `EffectiveConfig`、`LocalSettings`、`HostContext` | SRP | 通過 |
+| `TemplateEngine`、`CompiledTemplate`、`SourceLoader` | 範本的編譯、引用分析與渲染；`SourceLoader` 讀取範本與原樣複製兩種來源 | `FileSystem`、`Layout`、`ModuleSet` | OCP：新增範本函式只改註冊表（§4.5）。DIP：經由 trait 讀檔 | 通過 |
+| `PreflightChecker` | 三個階段都是寫入前的檢查，沒有狀態 | `AnalysisContext` 借用八種資料，`TargetSet`、`ApplyPlan` | Demeter：經由 `ctx` 讀取設定與值的內部 | 接受（A2） |
+| `TomlEditor` | 只處理 TOML 文字，不知道設定的意義 | 無 | SRP | 通過 |
+| `ManifestService` | 三個方法都修改 manifest | `FileSystem`、`Layout`、`StateStore`、`SyncHook`、`TomlEditor`、`parse_manifest` | `StateStore` 只有 `forget` 使用 | 接受（A4） |
+| `QueryService` | 只有唯讀的查詢 | 建構時借用七項資料；只用 `FileSystem` 的唯讀方法 | — | 通過；建構方式見 A5 |
+| `FileSystem`（trait） | 檔案系統的所有操作 | — | ISP：唯讀的使用者也看得到寫入方法。LSP：platform 與 `FaultFs` 遵守同一份後置條件（§4.10）；`FaultFs` 只能回傳實際可能發生的錯誤，`applied` 必須正確 | ISP 接受（A1） |
+| `WriteLock` | 只表示持有鎖定 | `FileSystem` | — | 通過 |
+| `StateStore` | 狀態檔的格式、載入與提交 | `FileSystem`、`Layout`、`SyncHook` | SRP：快照與回復在 `RecoveryManager` | 通過 |
+| `Planner` | `targets` 與 `plan` 都從設定與觀測推出計畫 | `FileSystem`（唯讀）、`HostContext`、`Layout`、`PlanInput` 的八項資料 | 不接收 `AnalysisContext`，避免 `plan` 與 `preflight` 循環（§4.12） | 通過 |
+| `RecoveryManager` | 本批的快照與回復，以及跨批次的殘留清理 | `FileSystem`、`Layout`、`SyncHook`、`LoadedState` | 修正前回傳 `exec` 的型別，形成循環 | 修正後通過（D4、D6）；兩種責任見 A3 |
+| `Executor` | 執行計畫、提交狀態、交給回復 | `FileSystem`、`StateStore`、`RecoveryManager`、`SyncHook`、`ApprovedPlan` | — | 通過 |
+| `ApplyService` | Facade，只排列步驟，沒有自己的判定 | 依賴最多：`ConfigLoader`、`StateStore`、`ValueResolver`、`SourceLoader`、`Planner`、`PreflightChecker`、`Executor` | Facade 的出向依賴多是預期的，依賴的都是公開介面；入向依賴只有執行檔與 `InitializationService` | 通過 |
+| `InitializationService` | 準備來源目錄與本機設定，重用套用 | `FileSystem`、`GitClient`、`ApplyService`、`ConfigLoader`、`TomlEditor` | DIP：git 經由 trait | 通過 |
+| `GitClient`（trait） | 只有 clone | — | ISP、DIP | 通過 |
+| 執行檔的 `run`、`output` | 組合 platform 與 core；轉換輸出 | core 與 platform 的公開介面 | 規則不在執行檔重做（§9） | 通過 |
+
+### 11.3 檢查方式
+
+**clippy**：CI 在三平台執行 `cargo clippy --workspace --all-targets -- -D warnings`。clippy 的設定以 crate 為單位，`rosamta-core/clippy.toml` 不會合併上層的設定，所以 core 的檔案要重複列出共通的項目。
+
+| 範圍 | `disallowed-methods` | `disallowed-types` |
+| --- | --- | --- |
+| 所有 crate | `std::io::stdin`（USE-001、§9.8） | `std::net::TcpStream`、`std::net::TcpListener`、`std::net::UdpSocket`（IF-013） |
+| core | `std::fs` 的函式（`read`、`read_to_string`、`write`、`metadata`、`symlink_metadata`、`read_dir`、`create_dir_all`、`remove_file`、`rename`、`canonicalize` 等）；`std::path::Path` 會存取檔案系統的方法（`exists`、`is_file`、`is_dir`、`metadata`、`read_dir`、`canonicalize`）；`std::env` 的 `var`、`var_os`、`vars`、`vars_os`、`home_dir`、`current_dir`；`std::time::SystemTime::now` | `std::fs::File`、`std::fs::OpenOptions`、`std::process::Command` |
+
+core 另外啟用 `clippy::unwrap_used` 與 `clippy::expect_used`（§11.1）。
+
+**module 依賴**：core 的 integration test（`rosamta-core/tests/architecture.rs`）讀取 `src/` 的原始碼檢查，隨 `cargo test` 在三平台執行，因此也是每個 commit 的檢查：
+
+- module 之間的引用一律寫成 `crate::<module>`，`super::` 只用在同一個 module 內。測試收集每個 module 引用的 `crate::<module>`，與 §3.2 的「可依賴」比對；出現 `super::super` 也視為失敗。
+- `pub(crate)` 無法限制成只有某個 module 能呼叫，所以測試另外確認三個建構函式的呼叫位置：`TemplateValues` 只在 `preflight`、`DesiredContent` 只在 `plan`、`ApprovedPlan` 只在 `apply`。`#[cfg(test)]` 的單元測試檔不在此限，§5.11 的判定等單元測試要直接建立這些值（§8.1）。依 §4 的介面，這三個型別目前都只有上述的建立者（§4.5、§4.12、§4.14、§4.15）。
+
+### 11.4 發現的問題與處理
+
+修正的問題：
+
+| 編號 | 問題 | 原則 | 處理 |
+| --- | --- | --- | --- |
+| D1 | `diag` 的 `Origin` 使用 `path` 的型別，§3.2 卻允許 `path` 依賴 `diag`；`host` 也允許依賴 `diag`。表格允許了循環 | 依賴方向、耦合 | `path` 與 `host` 本來就回傳自己的錯誤型別，改為不依賴 `diag`；`diag` 依賴 `path` 與 `name`（§3.2、uml P2） |
+| D2 | 名稱型別與 `Permissions` 沒有指定 module。放在 `config` 時，第 0 層的 `diag` 與第 1 層的 `state` 都要依賴 `config` | 依賴方向 | 新增第 0 層的 `name` module（§3.2、§4.1） |
+| D3 | `Layout::new` 接收 `config` 的 `LocalSettings`，第 0 層依賴第 1 層 | 依賴方向 | 改為接收本機設定的 `source`（§4.3） |
+| D4 | `RecoveryManager` 回傳 `exec` 的 `ExecError`，而 `exec` 依賴 `recovery`，形成循環 | 依賴方向、耦合 | `RecoveryManager` 改回傳 `FsError`，由 `Executor` 加上項目轉成 `ExecError`（§4.13、§4.14） |
+| D5 | `Layout::config_dir` → `load_local` → `Layout::new` 的順序，在 `ApplyService` 與執行檔的管理、查詢中重複 | 資訊隱藏、conceptual integrity | 新增 `ConfigLoader::load_layout`，順序只寫在一處（§4.3、§4.15、§9.3） |
+| D6 | `clean_stale` 與 `report_stale` 接收完整的 `Layout`。初始化在決定來源目錄之前就要清理，執行檔因此要重做 §4.16 第 1 步；每個查詢也要先讀本機設定才能提示殘留 | 耦合 | 改為接收 `HostContext`，只用狀態目錄與設定目錄；新增 `Layout::txn_root`（§4.3、§4.13、§9.3） |
+| D7 | 代碼 `docedit.mixed-line-endings` 以內部 module 的名稱當前綴，使用者看不到 `docedit` | conceptual integrity（命名） | 改為 `config.mixed-line-endings`，與 §9.5 的前綴規則一致（§4.7、§4.8、§4.16） |
+
+接受、不修改的問題：
+
+| 編號 | 問題 | 不修改的理由 |
+| --- | --- | --- |
+| A1 | `FileSystem` 把唯讀與寫入的方法放在同一個 trait，`Planner`、`QueryService` 等唯讀的使用者也看得到寫入方法（ISP） | 寫入方法都要求 `&WriteLock`，唯讀的使用者拿不到鎖定，實際上無法呼叫。拆成兩個 trait 後，platform 與 `FaultFs` 都要實作兩個 trait，每個服務的簽名也要選用其中一個，得到的只是文件上的區分 |
+| A2 | `AnalysisContext` 借用八種資料，`PreflightChecker` 經由它讀取設定與值的內部（耦合面寬、Demeter） | 預檢的本質是檢查整批輸入的一致性，需要看到全部資料。呼叫者只有 `ApplyService`，借用都是唯讀的；依階段拆成不同的 context，會在三個型別重複大部分欄位 |
+| A3 | `RecoveryManager` 同時負責本批的回復與跨批次的殘留清理（SRP） | 兩者都依賴 journal 與批次目錄的格式。拆開後，這個格式就要成為兩個類別之間的公開介面，違反資訊隱藏（§4.13） |
+| A4 | `ManifestService` 持有 `StateStore`，只有 `forget` 使用（內聚） | 三個方法共用 manifest 的修改規則：以 `TomlEditor` 修改、以 `parse_manifest` 確認、依載入時的版本取代（§4.8）。把 `forget` 拆成另一個服務，就要重複這段規則 |
+| A5 | `ApplyService` 自行載入設定，`QueryService` 卻在建構時接收已載入的資料，兩種服務的建構方式不同（conceptual integrity） | `ApplyService` 是 Facade：初始化在建立來源目錄之後要重新載入（§4.16），預覽與套用也必須以相同方式載入。查詢沒有這個需求；由執行檔載入一次，`query` 與 `list` 就能共用同一段流程（§9.3） |

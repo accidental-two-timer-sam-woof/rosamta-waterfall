@@ -55,6 +55,7 @@ flowchart TB
     end
     subgraph L0["第 0 層：基礎"]
         diag["diag"]
+        name["name"]
         host["host"]
         path["path"]
         fs["fs<br/>trait FileSystem"]
@@ -71,13 +72,14 @@ flowchart TB
     exec -.-> recovery
     resolve -.-> config
     template -.-> config
-    host -.-> diag
+    diag -.-> name
+    diag -.-> path
     path -.-> host
     fs -.-> path
     layout -.-> path
 ```
 
-層與層的箭頭表示可以依賴任何較低的層，例如第 3 層的 `manage` 直接使用第 1 層的 `docedit`。所有 module 都使用 `diag`，第 0 層以外的這類依賴不逐一畫出。
+層與層的箭頭表示可以依賴任何較低的層，例如第 3 層的 `manage` 直接使用第 1 層的 `docedit`。`name`、`host`、`path` 以外的 module 都使用 `diag`，這類依賴不逐一畫出；這三個 module 不使用 `diag`，因為 `diag` 的來源位置要用到名稱與路徑，反過來會形成循環。
 
 ## 3. 詳細類別圖 D1：設定資料型別
 
@@ -312,12 +314,13 @@ classDiagram
         +config HomePath
         +state HomePath
         +config_dir(host, diags)$ Checked~HomePath~
-        +new(host, local, diags)$ Checked~Layout~
+        +new(host, source, diags)$ Checked~Layout~
         +reserved() Vec~Reserved~
     }
     class ConfigLoader {
         +new(fs, host) ConfigLoader
         +load_local(config_dir, diags) Checked~LocalSettings~
+        +load_layout(diags) Checked~LocalSettings, Layout~
         +load(layout, diags) EffectiveConfig
     }
     class TomlEditor {
@@ -659,13 +662,14 @@ classDiagram
         +execute(lock, plan, started_at, diags) ApplyReport
     }
     class RecoveryManager {
-        +begin(fs, layout, sync, lock, started_at, state)$ Result
+        +begin(fs, layout, sync, lock, started_at, state)$ Result~Self, FsError~
         +temp_name(at) Result~HomePath~
         +capture(expect, content) Result~SnapshotId~
         +record(done)
         +rollback(diags) RecoveryReport
         +finish(diags)
-        +clean_stale(fs, layout, lock, diags)$
+        +clean_stale(fs, host, lock, diags)$
+        +report_stale(fs, host, diags)$
     }
     class ApplyReport {
         +batch Option~BatchId~
