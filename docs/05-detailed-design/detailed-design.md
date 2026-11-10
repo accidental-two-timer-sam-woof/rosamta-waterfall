@@ -421,7 +421,7 @@ width = 40
 
 選填欄位在四個層級都沒有值時，以 `none` 傳入範本（§2.3）。
 
-### 5.6 內建模組的欄位
+### 5.6 內建模組、輸出與範本
 
 內建模組以與 §5.5 相同的格式宣告，加上 `default`，編進執行檔（DC-004）。四個模組的格式版本都是 `1`。
 
@@ -438,12 +438,26 @@ width = 40
 | `shellrc` | `aliases` | map，名稱為 `word`，值為 string | 否 | — | — | alias |
 | `shellrc` | `path` | list，元素為 string | 否 | — | — | 加入 `PATH` 的目錄 |
 | `terminal` | `cursor_shape` | enum | 否 | `block`、`beam`、`underline` | — | 游標形狀 |
-| `terminal` | `scrollback` | integer | 否 | 0–1000000 | — | 捲動行數 |
+| `terminal` | `scrollback` | integer | 否 | 0–100000 | — | 捲動行數 |
 | `terminal` | `keybindings` | map，名稱為 `word`，值為 enum | 否 | 名稱是按鍵組合，例如 `ctrl+shift+c`；值為 `copy`、`paste`、`new_tab`、`close_tab`、`next_tab`、`previous_tab`、`increase_font_size`、`decrease_font_size`、`reset_font_size` | — | 快捷鍵 |
 
 `ansi` 的預設值依序為 `#000000`、`#cd0000`、`#00cd00`、`#cdcd00`、`#0000ee`、`#cd00cd`、`#00cdcd`、`#e5e5e5`、`#7f7f7f`、`#ff0000`、`#00ff00`、`#ffff00`、`#5c5cff`、`#ff00ff`、`#00ffff`、`#ffffff`；`foreground` 與 `background` 取其中第 7 與第 0 色。
 
 必填欄位都有預設值（DATA-003）。沒有預設值的欄位都是選填，未設定時內建範本不輸出對應的設定，讓程式使用自己的預設值（DATA-004）。字型名稱與字級沒有跨平台都適用的預設值，因此是選填。快捷鍵的值是不分程式的動作名稱，由各內建範本轉成目標程式的寫法，同一份設定才能套用到不同的終端機。
+
+**內建輸出與內建範本**：每個內建範本對應一個同名的內建輸出，以 `builtin:<名稱>` 引用（§5.4）。內建輸出不會自動啟用，要在 Profile 的 `enable` 列出（FR-PRF-006）。
+
+| 內建輸出與範本 | 程式 | `program` | `format_version` | 目標路徑 | 引用的模組 |
+| --- | --- | --- | --- | --- | --- |
+| `ghostty` | Ghostty | `ghostty` | `1.2` | Linux、macOS：`~/.config/ghostty/config` | `theme`、`font`、`terminal` |
+| `alacritty` | Alacritty | `alacritty` | `0.15` | Linux、macOS：`~/.config/alacritty/alacritty.toml`；Windows：`${APPDATA}/alacritty/alacritty.toml` | `theme`、`font`、`terminal` |
+| `posix-shell` | POSIX shell（bash、zsh 等） | `sh` | `POSIX.1-2017` | Linux、macOS：`~/.config/shell/rosamta.sh` | `shellrc` |
+| `powershell` | PowerShell | `powershell` | `5.1` | Windows：`~/Documents/PowerShell/rosamta.ps1` | `shellrc` |
+
+- 兩個終端機涵蓋三個平台：Ghostty 沒有 Windows 版，Alacritty 三個平台都有。shell 環境依平台分成 POSIX shell 與 PowerShell。
+- 終端機的設定檔直接寫到程式讀取的位置，與 SRS 3.2.8 的例子相同；已有設定檔的使用者可宣告 `takeover`，或以 `[builtin.*]` 改變目標路徑。shell 的輸出則寫到獨立的檔案，由使用者在自己的啟動檔載入，例如在 `~/.bashrc` 加上 `. ~/.config/shell/rosamta.sh`：`~/.bashrc` 與 PowerShell 的 `$PROFILE` 通常還有使用者自己的內容，完整管理會覆寫它們。
+- `format_version` 是撰寫範本時依據的版本。`powershell` 只使用 Windows PowerShell 5.1 也支援的語法，PowerShell 7 同樣能載入。實作開始時若各程式已有新的穩定版，依新版撰寫範本並更新本表。
+- 每個欄位至少由一個內建範本使用（DATA-002）。`terminal.scrollback` 只有 Alacritty 的範本使用：Ghostty 的捲動上限以位元組計，無法由行數換算。上限 100000 是 Alacritty 接受的最大值。單元測試逐一修改每個欄位的值，確認至少一個內建輸出的內容改變，並逐一確認每個內建範本都有 `program` 與 `format_version`（FR-TPL-002）。
 
 ### 5.7 Profile
 
