@@ -1843,7 +1843,7 @@ platform 的實作以 `std::process` 執行 git。Linux 與 macOS 在子程序 e
    3. 清單相同時，以 `RemoveTree` 刪除，`listing` 是第 3 步的清單，同步點為 `SourceRemove`。`kept` 不是空的時，回報 `init.rollback-kept`，列出保留的項目與暫存名稱的位置。
    4. 清單不同或走訪失敗時，不刪除任何項目，以 `MoveDir` 移回正式位置，回報 `init.rollback-kept`，列出來源目錄的位置與不同的項目，由使用者確認後自行刪除再重試。移不回時（正式位置已被占用），回報暫存名稱的位置。
 
-   比較包含狀態變更時間：一般程式能把修改時間設回原值，卻無法設定狀態變更時間，所以修改內容後還原修改時間的情況也會被發現。剩下的限制是比較之後到刪除單一項目之間的空窗：`RemoveTree` 逐項核對身分，能發現新增與替換，但同一個檔案在這段空窗內被就地修改時，仍會被刪除（§6.3 的空窗）。
+   比較包含狀態變更時間（ASM-23）：一般程式能把修改時間設回原值，Linux 與 macOS 上卻無法設定狀態變更時間，所以修改內容、大小不變又還原修改時間的情況也會被發現。Windows 的 `ChangeTime` 可由程式設回，同時還原兩個時間的修改偵測不到。另一個限制是比較之後到刪除單一項目之間的空窗：`RemoveTree` 逐項核對身分，能發現新增與替換，但同一個檔案在這段空窗內被就地修改時，仍會被刪除（§6.3 的空窗）。
 6. 指定了 `repo` 而且 `req.apply` 有值時，以 `ApplyService::apply` 執行第一次套用（FR-INI-001、FR-INI-011），回報放在 `apply`。沒有指定 `repo` 時不套用（04 §2）。
 
 **前置條件**：已取得鎖定，執行檔已呼叫 `RecoveryManager::clean_stale`。
@@ -2542,7 +2542,7 @@ pilot 結果分四種：
 
 ### 7.1 驗證環境
 
-證據來自 pilot workflow 的 CI run 42634818704，P1–P5 與發佈檢查全部通過。§7.7 的 P6 結果來自 CI run 42785134928，這個 run 也重跑了 P1–P5 與發佈檢查，全部通過；環境與下表相同，只有 ubuntu runner 的 kernel 為 7.0.0-1014-aws。§7.8 的 P7 結果來自 CI run 42932273514，環境與下表相同，P1–P6 與發佈檢查也全部通過。runner 映像檔固定版本；正式支援的平台版本由 06 決定（PORT-001）。
+證據來自 pilot workflow 的 CI run 42634818704，P1–P5 與發佈檢查全部通過。§7.7 的 P6 結果來自 CI run 42785134928，這個 run 也重跑了 P1–P5 與發佈檢查，全部通過；環境與下表相同，只有 ubuntu runner 的 kernel 為 7.0.0-1014-aws。§7.8 的 P7 結果來自 CI run 42932273514（ASM-22）與 42933094074（ASM-23），環境與下表相同，兩個 run 的 P1–P6 與發佈檢查也全部通過。runner 映像檔固定版本；正式支援的平台版本由 06 決定（PORT-001）。
 
 | 環境 | 作業系統 | 測試目錄的檔案系統 | 執行身分 |
 | --- | --- | --- | --- |
@@ -2618,20 +2618,21 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 | ASM-20 | Linux 與 macOS 的 `flock(LOCK_EX \| LOCK_NB)`，在其他程序持有鎖定時以 `EWOULDBLOCK` 失敗；Windows 以共用模式 `0` 開啟的檔案，其他程序再開啟時以 `ERROR_SHARING_VIOLATION` 失敗。兩者都在程序結束時釋放 | Linux `flock(2)`：鎖定屬於 open file description，所有相關的 fd 關閉時釋放。macOS `flock(2)`：`LOCK_NB` 時以 `EWOULDBLOCK` 失敗。`CreateFileW` 文件：共用模式為 `0` 時，其他程序無法開啟該檔案 | `flock` 不屬於 POSIX，但 Linux 與 macOS 都提供。網路檔案系統不在範圍內。不成立時，兩個 rosamta 程序可能同時套用，這超出 AS-5 的範圍，§6.3 的核對仍然有效 | 通過。三平台上，持有鎖定時另一個程序都失敗（Linux 與 macOS 為 `EWOULDBLOCK`，Windows 為 `ERROR_SHARING_VIOLATION`）。Linux 與 macOS 在同一個程序內開啟再關閉同一個檔案的另一個 fd，鎖定仍在。持有者被終止後，第一次嘗試就取得鎖定；鎖定檔沒有被刪除 |
 | ASM-21 | Linux 與 macOS 上，以 `O_NONBLOCK` 開啟 FIFO 或裝置檔不會阻塞 | POSIX `open`：以 `O_RDONLY \| O_NONBLOCK` 開啟 FIFO 立即返回；支援非阻塞開啟的裝置檔也立即返回 | 只在判定類型與開檔之間被換成特殊檔案時才會遇到；開啟後以 handle 判定類型，不是一般檔案就不讀取（§6.3）。pilot 沒有測試裝置檔 | 通過。Linux 與 macOS 以 `O_NOFOLLOW \| O_NONBLOCK` 開啟 FIFO 都立即返回，以 handle 判定為其他類型。對照組：不加 `O_NONBLOCK` 時開啟會阻塞 |
 
-### 7.8 初始化的 git clone
+### 7.8 初始化的 git clone 與撤回
 
-§4.16 的 clone 依賴下列 git 的行為，由 pilot P7 驗證（CI run 42932273514，§7.1）。測試以本機的 file:// repo 執行，不需要網路；替換由另一個 pilot 程序在 clone 開始前執行。
+§4.16 的 clone 與撤回依賴下列行為，由 pilot P7 驗證（§7.1）。clone 的測試以本機的 file:// repo 執行，不需要網路；替換由另一個 pilot 程序在 clone 開始前執行。
 
 | 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
 | --- | --- | --- | --- | --- |
 | ASM-22 | 以 `git clone -- <url> .` clone 到工作目錄時，git 寫入工作目錄的實際位置。Linux 與 macOS 以 `fchdir` 進入持有的目錄後，路徑上的目錄被換成連結或其他目錄，不會改變 git 的寫入位置 | git-clone 文件只說明 `<directory>` 是 clone 的目的地，沒有說明如何解析，也沒有說明 clone 期間是否以絕對路徑操作 | 文件沒有保證，依 pilot 的結果。clone 開始後，git 以絕對路徑寫入：clone 進行中路徑上的目錄被換成連結時，之後的寫入可能經由連結落在 home 外；暫存目錄或上層在最後一次核對後被整個搬出 home 時，寫入跟著目錄到 home 外（同 ASM-06）。兩者都由 clone 後的核對發現（§6.3）。本機實驗中，clone 進行中替換上層時，git 因找不到自己的 `.git/config` 而失敗，home 外沒有檔案，但這只是單次觀察，不當作保證。Windows 依 ASM-08 持有每一層，沒有這些情況。pilot 只用 file:// repo，HTTPS 與 SSH 由 06 驗證 | 有條件。git 2.56.0（Windows 為 2.56.0.windows.4）。clone 開始前替換父目錄或上一層：Linux 與 macOS 的換成連結、換成 home 內的其他目錄共 4 個案例，clone 都在持有的目錄，home 外與替代目錄都沒有改變；整個搬出 home 的 2 個案例，clone 寫入搬出去的目錄。6 個案例在 clone 後重新走訪都發現路徑改變。兩個 Windows job 中，6 種替換都被擋下（sharing violation），clone 照常完成。對照組：以路徑交給 git 時，Linux 與 macOS 換成連結的 2 個案例，整個 clone 寫到 home 外 |
+| ASM-23 | 檔案的內容或屬性改變時，狀態變更時間（Linux、macOS 的 `st_ctime`，Windows 的 `ChangeTime`）跟著更新，包括程式改寫內容後把修改時間設回原值的情況。Linux 與 macOS 沒有設定 `st_ctime` 的系統呼叫 | POSIX `<sys/stat.h>`：`st_ctime` 是最後一次狀態改變的時間；`utimensat` 只能設定存取與修改時間，而且會更新 `st_ctime`。`FILE_BASIC_INFO` 文件：`ChangeTime` 是最後一次改變的時間，`SetFileInformationByHandle` 可以設定它 | 用於 §4.16 撤回前的比較。Windows 上，有 `FILE_WRITE_ATTRIBUTES` 的程式可以把 `ChangeTime` 與修改時間都設回原值，這種修改偵測不到；只有大小不變時才會發生 | 有條件。三平台上，改寫成同樣大小的內容、把修改時間設回原值後，狀態變更時間都改變。Linux 與 macOS 沒有設回的方法；兩個 Windows job 以 `SetFileInformationByHandle` 把 `ChangeTime` 設回原值都成功 |
 
 ### 7.9 文件出處
 
-- POSIX.1-2024：[`rename`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/rename.html)、[`link`／`linkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/link.html)、[`open`／`openat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/open.html)、[`unlink`／`unlinkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/unlink.html)、[`<sys/stat.h>`](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_stat.h.html)
+- POSIX.1-2024：[`utimensat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/futimens.html)、[`rename`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/rename.html)、[`link`／`linkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/link.html)、[`open`／`openat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/open.html)、[`unlink`／`unlinkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/unlink.html)、[`<sys/stat.h>`](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_stat.h.html)
 - Linux：[`rename(2)`](https://man7.org/linux/man-pages/man2/rename.2.html)、[`flock(2)`](https://man7.org/linux/man-pages/man2/flock.2.html)
 - macOS：[`fsync(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html)、[`flock(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)、[`rename(2)`（xnu 原始碼）](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/rename.2)、[QA1118 Statically linked binaries on Mac OS X](https://developer.apple.com/library/archive/qa/qa1118/_index.html)
-- Windows：[`MoveFileExW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[`CreateFileW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[`GetFinalPathNameByHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)、[`FILE_ID_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[`BY_HANDLE_FILE_INFORMATION`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information)、[`FILE_DISPOSITION_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info)、[`FILE_LINK_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_link_information)、[`FILE_RENAME_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)、[`CreateSymbolicLinkW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw)、[Create symbolic links 使用者權限](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/create-symbolic-links)、[`CreateDirectoryW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw)、[`GetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo)、[`SetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo)
+- Windows：[`MoveFileExW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[`CreateFileW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[`GetFinalPathNameByHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)、[`FILE_ID_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[`BY_HANDLE_FILE_INFORMATION`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information)、[`FILE_DISPOSITION_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info)、[`FILE_BASIC_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_basic_info)、[`FILE_LINK_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_link_information)、[`FILE_RENAME_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)、[`CreateSymbolicLinkW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw)、[Create symbolic links 使用者權限](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/create-symbolic-links)、[`CreateDirectoryW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw)、[`GetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo)、[`SetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo)
 - git：[`git-clone`](https://git-scm.com/docs/git-clone)
 - Rust：[`std::env::home_dir`](https://doc.rust-lang.org/std/env/fn.home_dir.html)
 
@@ -3495,6 +3496,7 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 | ASM-20 | A5 最後一個情境：套用持有鎖定時停止管理 | 兩個會寫入的子指令同時執行，後者立即失敗（§6.7） |
 | ASM-21 | A18：無寫入端的 FIFO | 裝置檔（§7.7） |
 | ASM-22 | A7：clone 前替換暫存目錄的上層（§8.5） | clone 進行中替換路徑上的目錄；HTTPS 與 SSH 的遠端（§7.8） |
+| ASM-23 | A7：撤回來源目錄前改動其中的檔案（§8.5） | 改寫內容、大小不變並還原修改時間，Linux 與 macOS 上撤回仍保留該檔案 |
 
 ### 13.3 交給 06 的事項
 
