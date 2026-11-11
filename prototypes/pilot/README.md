@@ -10,6 +10,7 @@
 | P4 | toml_edit 保留格式的編輯與錯誤位置（05 §2.2） | `tests/p4_toml_edit.rs` |
 | P5 | MiniJinja 的靜態引用與錯誤訊息（05 §2.3） | `tests/p5_minijinja.rs` |
 | P6 | 05 §6 新增的平台操作：不覆蓋的建立與目錄改名；Linux、macOS 的交換式改名，以及據此做的取代與刪除會找出最後一次核對後的改動並放回原位；Windows 持有目標核對時，其他程序無法改名、刪除或寫入；Windows DACL 的建立與複製；多程序鎖定；以 `O_NONBLOCK` 開啟 FIFO（ASM-16–ASM-21） | `tests/p6_platform_ops.rs` |
+| P7 | 初始化的 `git clone`：在建立並持有暫存目錄後，另一個程序把上層目錄換成指向 home 外的連結、換成 home 內的其他目錄，或整個搬到 home 外，再執行 clone。比較以路徑交給 git，與 Linux、macOS 以 `fchdir` 進入持有的目錄後 `git clone -- <url> .`、Windows 持有每一層 handle 的做法；clone 後重新走訪能否發現替換（DC-002，04 §5 A7） | `tests/p7_git_clone.rs` |
 
 ## 執行
 
