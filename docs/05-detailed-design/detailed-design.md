@@ -1255,7 +1255,7 @@ pub enum FsOp<'a> {
     CreateDir    { expect: &'a Observation, private: bool },
     RemoveDir    { expect: &'a Observation },                  // 必須是空的
     Capture      { expect: &'a Observation, into: &'a HomePath }, // 複製成 0600 的新檔，不覆蓋
-    Backup       { expect: &'a Observation, into: &'a HomePath }, // hard link，不行時複製；連結只能 hard link
+    Backup       { expect: &'a Observation, into: &'a HomePath, copy: bool }, // copy 為 false 時先試 hard link，不行時複製；連結只能 hard link
     RestoreLink  { backup: &'a Observation, expect: &'a Observation }, // 把連結的備份改名回目標，取代 expect
     MoveDir      { expect: &'a Observation, to: &'a Observation }, // 不覆蓋的改名（§6.3 初始化）
     RemoveTree   { expect: &'a Observation, listing: &'a TreeListing }, // 只用於初始化的暫存目錄；只刪除清單中、身分相符的項目
@@ -1711,7 +1711,7 @@ pub enum ExecErrorKind {
 | `Create` | 不存在的上層目錄依序 `CreateDir`，再 `CreateFile`，權限見 §6.4 |
 | `Update`，內容不同（`Proceed`、`Resolve(Overwrite)`） | `capture` → `ReplaceFile` |
 | `Update`，只有權限不同 | `capture`（只記權限）→ `SetMode` |
-| `Takeover`，一般檔案 | `capture` → `Backup` → `ReplaceFile`；內容相同、只有權限不同時，最後一步改為 `SetMode` |
+| `Takeover`，一般檔案 | `capture` → `Backup` → `ReplaceFile`；內容相同、只有權限不同時，`Backup` 以複製建立（`copy: true`），最後一步改為 `SetMode`（§6.5） |
 | `Takeover`，連結 | `Backup`（hard link，§6.5）→ `ReplaceFile`；不另外擷取快照 |
 | `Delete`（`Proceed`、`Resolve(Delete)`） | `capture` → `DeleteFile` |
 
@@ -2447,7 +2447,7 @@ Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保�
 
 **接管備份**的建立方式（§5.12）：
 
-- 一般檔案：先嘗試在備份目錄為原檔建立 hard link。Linux 與 macOS 用 `linkat`，建立後核對備份的身分與原檔相同；Windows 以原檔的 handle 用 `FileLinkInformation` 建立（ASM-11）。hard link 就是原檔本身，權限自然相同（SEC-003），也不占額外空間。備份目錄與目標不在同一個檔案系統，或無法建立 hard link 時（例如 `EXDEV`、`ERROR_NOT_SAME_DEVICE`，或 Linux 的 `fs.protected_hardlinks` 拒絕），改以快照的方式複製，Linux 與 macOS 再把副本的權限設成原檔的權限（SEC-003）。兩種方式都在建立後核對備份的版本。
+- 一般檔案：先嘗試在備份目錄為原檔建立 hard link。Linux 與 macOS 用 `linkat`，建立後核對備份的身分與原檔相同；Windows 以原檔的 handle 用 `FileLinkInformation` 建立（ASM-11）。hard link 就是原檔本身，權限自然相同（SEC-003），也不占額外空間。備份目錄與目標不在同一個檔案系統，或無法建立 hard link 時（例如 `EXDEV`、`ERROR_NOT_SAME_DEVICE`，或 Linux 的 `fs.protected_hardlinks` 拒絕），改以快照的方式複製，Linux 與 macOS 再把副本的權限設成原檔的權限（SEC-003）。接管後只變更權限時（§4.14），目標仍是原檔，hard link 的備份會跟著變成新權限，所以一律改以複製建立。兩種方式都在建立後核對備份的版本。
 - 連結：只能以 hard link 備份（§7.4），所以備份目錄必須與目標在同一個檔案系統。規劃時比較兩者的檔案系統（Linux 與 macOS 的 `st_dev`、Windows 的 volume 序號，在同一次執行內有效，ASM-04），不同時預檢失敗，回報目標與狀態目錄，回傳 `1`（04 §3.1「無法安全備份」）。不改用 `readlinkat` 加 `symlinkat` 複製連結：那樣回復時就要在目標路徑建立新的連結，正是 §7.4 為了 Windows 標準使用者與 DC-003 而避開的做法。連結的回復以這份備份為來源，不另外擷取快照。
 
 **殘留檔案的清理**（§5.1 的暫存檔與 `txn/`）：
@@ -2491,7 +2491,7 @@ Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保�
 - 所有啟用輸出的期望內容，在規劃時讀入記憶體，執行時不重讀來源（04 §2、A24）。
 - 同一時間最多一個暫存檔，位於目標所在的檔案系統，大小等於該輸出。
 - 回復快照，位於狀態目錄的檔案系統，總和等於本批要取代或刪除的既有檔案大小。
-- 跨檔案系統的接管備份，大小等於被接管的檔案；同一個檔案系統時是 hard link，不占空間。
+- 跨檔案系統或只變更權限的接管備份，大小等於被接管的檔案；其他同一個檔案系統的接管備份是 hard link，不占空間。
 
 空間不足時，寫入暫存檔或快照會失敗，依執行失敗整批回復。回復只寫入暫存檔，需要的空間不超過被回復的單一檔案；它在本批取代時已經寫入過同樣大小的暫存檔。
 
