@@ -2897,7 +2897,7 @@ update     ~/.ssh/config              ssh-config proceed  mode 0644 -> 0600
 +foreground = #c0caf5
 ```
 
-- 內容差異是 unified diff（IF-003），前後各 3 行的上下文。檔名相對於 home，加上 `a/`、`b/`，建立與刪除的一方是 `/dev/null`，所以在 home 執行 `patch -p1` 就能套用。檔案結尾沒有換行時輸出 `\ No newline at end of file`，`patch` 的結果才會逐位元組相同。
+- 內容差異是 unified diff（IF-003），前後各 3 行的上下文。檔名相對於 home，加上 `a/`、`b/`，建立與刪除的一方是 `/dev/null`。含空白、引號或反斜線的標頭路徑以 Git 的 C 字串規則引號表示，讓 `patch` 能辨認完整檔名。擷取未上色的 unified diff 區段後，在 home 以 GNU `patch --binary -p1` 套用；`--binary` 可保留 CRLF。檔案結尾沒有換行時輸出 `\ No newline at end of file`，`patch` 的結果才會逐位元組相同。
 - 任一方不是 UTF-8 或含 NUL 字元時，只輸出 `Binary files a/<路徑> and b/<路徑> differ`。
 - 權限的改變寫在項目的那一行（`mode 0644 -> 0600`），不寫進差異：`patch` 不處理權限。只有權限不同的項目沒有內容差異。
 - 保留的項目也輸出差異，表示指定覆寫或接管時會寫入的內容。
@@ -3523,7 +3523,7 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 **子指令的輸出**：
 
 - IF-002：在沒有來源目錄與網路的環境，每個子指令的說明都包含用途、參數、exit code 與範例（§9.9）。
-- IF-003：`diff` 的輸出在 home 以 `patch -p1` 套用（§9.4）。
+- IF-003：擷取 `diff` 未上色的 unified diff 區段，在測試 home 以 GNU `patch --binary -p1` 套用（§9.4）。
 
 **基準與量測**：
 
