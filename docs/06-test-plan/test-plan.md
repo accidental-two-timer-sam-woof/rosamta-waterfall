@@ -44,7 +44,7 @@ A1–A26 對照 [04 設計分析](../04-design-analysis/design-analysis.md) §5�
 
 | 平台 | 版本與檔案系統 | 發佈目標與執行環境 |
 | --- | --- | --- |
-| Linux | Ubuntu 24.04 LTS，x86-64，ext4 | `x86_64-unknown-linux-musl`。CI 採 `ubuntu-24.04`，使用一般帳號 |
+| Linux | x86-64。CI 為 Ubuntu 24.04 LTS（ext4）。實機為 Arch Linux（kernel 7.2.14、btrfs），配備 Intel Core i5-1135G7、16 GiB RAM 與 NVMe SSD | `x86_64-unknown-linux-musl`。CI 採 `ubuntu-24.04`。Arch Linux 實機可執行 Linux 功能、PERF-001 與重開機驗收。CI 與實機都使用一般帳號 |
 | macOS | macOS 15.x，Apple Silicon 與 Intel，APFS | `aarch64-apple-darwin` 與 `x86_64-apple-darwin`。CI 採 `macos-15`。Apple Silicon 實機使用 MacBook Air（Apple M1，`MacBookAir10,1`），Intel 版本在 Intel 實機或相符架構的 runner 執行 |
 | Windows | Windows 11 專業版 25H2（build 26200.9711）與 Windows Server 2025（build 26100），x86-64，NTFS | `x86_64-pc-windows-msvc`，建置使用 `-C target-feature=+crt-static`。CI 採 `windows-2025`。Windows 11 實機與 CI 都以標準使用者在開發人員模式開啟、關閉時各驗收一次 |
 
@@ -129,7 +129,7 @@ Windows 開發人員模式關閉時，由環境管理者在同一磁碟區預建
 
 ### 4.1 效能參考環境
 
-參考機器使用 Intel Core i5-12400、16 GiB RAM、NVMe SSD、Ubuntu 24.04 LTS x86-64 與本機 ext4，以一般帳號執行 release 成品。測試資料包含 500 個已啟用的輸出。每個輸出有獨立的目標路徑，用同一份範本及 `theme` 欄位渲染成 4 KiB。初次套用不計時，後續 10 次使用相同的 home、設定、選項與輸出擷取方式。記錄成品 commit、工具鏈、核心版本、磁碟與 10 筆原始時間。量測以參考機器為準。
+效能驗收可使用 Ubuntu 24.04 LTS x86-64 的參考機（Intel Core i5-12400、16 GiB RAM、NVMe SSD、ext4），或 §2.1 的 Arch Linux 實機（kernel 7.2.14、Intel Core i5-1135G7、16 GiB RAM、NVMe SSD、btrfs）。整輪量測使用同一台機器，以一般帳號執行 release 成品。測試資料包含 500 個已啟用的輸出。每個輸出有獨立的目標路徑，用同一份範本及 `theme` 欄位渲染成 4 KiB。初次套用不計時，後續 10 次使用相同的 home、設定、選項與輸出擷取方式。記錄成品 commit、工具鏈、量測機器、核心版本、磁碟與 10 筆原始時間。
 
 A8 的空間測試使用數個大檔，在可限制容量的測試磁碟區分別觸發目標暫存檔或狀態目錄快照空間不足。記錄期望內容的大小、暫存檔峰值、快照與備份用量，並核對回復後的內容、權限與狀態。如果回復也因空間不足而失敗，應列出未能回復的路徑及原因，並保留可用副本。
 
