@@ -125,7 +125,7 @@ fn invalid_arguments_fail_before_dispatch() {
             "target.windows",
         ],
     );
-    assert!(String::from_utf8_lossy(&valid.stderr).contains("cli.not-implemented"));
+    assert!(String::from_utf8_lossy(&valid.stderr).contains("manage.failed"));
 }
 
 #[test]
@@ -330,4 +330,39 @@ fn apply_rolls_back_earlier_updates_when_a_later_target_is_busy() {
         "first\n"
     );
     assert_eq!(fs::read(&state).unwrap(), before);
+}
+
+#[test]
+fn add_modify_and_forget_preserve_the_target_and_existing_manifest_format() {
+    let home = temporary_home().unwrap();
+    let source = home.path().join(".local/share/rosamta");
+    fs::create_dir_all(&source).unwrap();
+    let manifest = source.join("manifest.toml");
+    let original = b"\xef\xbb\xbf# Keep this comment\r\n[builtin.ghostty]\r\nownership = \"full\" # Keep this too\r\n";
+    fs::write(&manifest, original).unwrap();
+    let target = home.path().join(".gitconfig");
+    fs::write(&target, b"binary\xff").unwrap();
+    successful(&home, &["add", "~/.gitconfig"]);
+    assert!(fs::read(&manifest).unwrap().starts_with(original));
+    assert_eq!(
+        fs::read(source.join("files/.gitconfig")).unwrap(),
+        b"binary\xff"
+    );
+    successful(&home, &["modify", "gitconfig", "--takeover", "true"]);
+    successful(&home, &["modify", "gitconfig", "--reset", "takeover"]);
+    fs::write(
+        source.join("profile.toml"),
+        "[[rules]]\nenable = [\"gitconfig\"]\n",
+    )
+    .unwrap();
+    successful(&home, &["apply"]);
+    successful(&home, &["forget", "gitconfig"]);
+    successful(&home, &["apply"]);
+    assert_eq!(fs::read(&target).unwrap(), b"binary\xff");
+    assert!(fs::read(&manifest).unwrap().starts_with(original));
+    let state: Value = serde_json::from_slice(
+        &fs::read(home.path().join(".local/state/rosamta/state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["outputs"], json!([]));
 }

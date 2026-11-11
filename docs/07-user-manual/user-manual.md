@@ -49,6 +49,17 @@ cargo run --locked -- schema manifest --help
 
 套用成功回傳 `0`，同時有完成與保留的項目回傳 `2`，失敗或全數保留回傳 `1`。如果診斷提到交易快照保留在 `txn/`，請先檢查診斷所列的路徑與備份。
 
+## 納入與停止管理
+
+```sh
+rosamta add '~/.gitconfig' --name gitconfig
+rosamta modify gitconfig --ownership create-only
+rosamta modify gitconfig --reset ownership
+rosamta forget gitconfig
+```
+
+`add` 會複製原檔到來源目錄的 `files/`，並在 manifest 記錄目前平台的目標。請在 `profile.toml` 的 `enable` 加入輸出名稱後再執行 `diff`。`forget` 會移除宣告與狀態紀錄，保留家目錄裡的目標與來源副本。
+
 尚未接上服務的指令會回傳 `cli.not-implemented`，例如 `init`。
 
 需要檢查 JSON 輸出時，可以執行 `cargo run --locked -- apply --format json`。請預期 exit code 為 `1`。`rosamta` 的標準輸出是一份含 `"result": null` 的 JSON，標準錯誤另有一行 JSON 診斷。參數錯誤、說明和版本資訊使用文字輸出。使用 `help` 子指令時，`--format` 放在 `help` 前面。要分開擷取 `rosamta` 的兩個串流，請直接執行建置後的二進位檔，避開 Cargo 的建置訊息。

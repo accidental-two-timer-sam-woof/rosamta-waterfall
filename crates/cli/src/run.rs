@@ -29,6 +29,9 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
             .ok(),
         Command::List | Command::Query(_) => inspect(&cli.command, &mut diagnostics),
         Command::Apply(args) => deploy(args, &mut diagnostics, &mut exit_code),
+        Command::Add { .. } | Command::Modify(_) | Command::Forget { .. } => {
+            manage(&cli.command, &mut diagnostics)
+        }
         Command::Diff(args) | Command::Status(args) => preview(
             args,
             matches!(cli.command, Command::Diff(_)),
@@ -66,6 +69,48 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
     }
 
     ExitCode::from(code)
+}
+
+fn manage(command: &Command, diagnostics: &mut Diagnostics) -> Option<(Value, String)> {
+    use rosamta_core::{manage::ManifestService, path::HomePath};
+    use serde_json::json;
+    let host = report(host::collect(), diagnostics)?;
+    let fs = report(SystemFs::open(&host.home), diagnostics)?;
+    let service = ManifestService {
+        fs: &fs,
+        host: &host,
+    };
+    let result = match command {
+        Command::Add { file, name } => {
+            let cwd = report(env::current_dir(), diagnostics)?;
+            let target = report(HomePath::argument(file, &host, &cwd), diagnostics)?;
+            service.add(target, name.clone())
+        }
+        Command::Modify(options) => service.modify(
+            options.output.clone(),
+            report(args::manifest_patch(options), diagnostics)?,
+        ),
+        Command::Forget { output } => service.forget(output.clone()),
+        _ => return None,
+    }
+    .map_err(|error| diagnostics.error(DiagCode::ManageFailed, error))
+    .ok()?;
+    let mut lines: Vec<_> = result
+        .changes
+        .iter()
+        .map(|(path, kind)| format!("{kind:<8} {path}"))
+        .collect();
+    if matches!(command, Command::Add { .. }) {
+        lines.push(format!(
+            "Enable {} in profile.toml to include it in the next plan.",
+            result.output
+        ));
+    } else if lines.is_empty() {
+        lines.push(format!("{} unchanged", result.output));
+    }
+    let value = json!({"output": result.output.to_string(), "unchanged": result.changes.is_empty(),
+        "changes": result.changes.iter().map(|(path, kind)| json!({"path": path.to_absolute(&host), "kind": kind})).collect::<Vec<_>>()});
+    Some((value, lines.join("\n")))
 }
 
 fn report<T>(result: Result<T, impl ToString>, diagnostics: &mut Diagnostics) -> Option<T> {

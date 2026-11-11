@@ -160,7 +160,7 @@ pub(crate) struct InitArgs {
 pub(crate) struct ModifyArgs {
     /// Name of the output in the manifest.
     #[arg(value_name = "OUTPUT")]
-    output: OutputName,
+    pub output: OutputName,
     /// Set the template path relative to the source directory.
     #[arg(long, value_name = "PATH", conflicts_with = "copy")]
     pub template: Option<OsString>,

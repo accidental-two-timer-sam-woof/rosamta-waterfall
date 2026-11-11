@@ -25,6 +25,7 @@ pub enum DiagCode {
     ApplyWarning,
     ExecuteFailed,
     RecoveryFailed,
+    ManageFailed,
 }
 
 impl DiagCode {
@@ -38,6 +39,7 @@ impl DiagCode {
             Self::ApplyWarning => "apply.warning",
             Self::ExecuteFailed => "exec.failed",
             Self::RecoveryFailed => "recovery.failed",
+            Self::ManageFailed => "manage.failed",
         }
     }
 }

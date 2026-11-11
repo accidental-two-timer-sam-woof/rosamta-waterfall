@@ -3,6 +3,68 @@ use rosamta_core::{host::HostContext, name::FieldRef, path::HomePath, plan::Choi
 
 use crate::cli::{ChoicesArgs, Cli, Command, InitArgs, ModifyArgs, Property};
 
+pub(crate) fn manifest_patch(args: &ModifyArgs) -> Result<rosamta_core::manage::Patch, String> {
+    use rosamta_core::{
+        config::{Ownership, Source},
+        host::Platform,
+        manage::Patch,
+    };
+    let path = |value: &std::ffi::OsStr| {
+        value
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| "path must be UTF-8".to_owned())
+    };
+    let mut patch = Patch::default();
+    if let Some(template) = &args.template {
+        patch.source = Some(Some(Source::Template(path(template)?)));
+    }
+    if let Some(copy) = &args.copy {
+        patch.source = Some(Some(Source::Copy(path(copy)?)));
+    }
+    patch.ownership = args.ownership.map(|ownership| {
+        Some(match ownership {
+            crate::cli::Ownership::Full => Ownership::Full,
+            crate::cli::Ownership::CreateOnly => Ownership::CreateOnly,
+        })
+    });
+    patch.permissions = args.permissions.clone().map(Some);
+    patch.takeover = args.takeover.as_ref().map(|value| Some(value == "true"));
+    for target in &args.target {
+        let text = path(target)?;
+        let (platform, value) = match text.split_once('=') {
+            Some(("linux", path)) => (Some(Platform::Linux), path),
+            Some(("macos", path)) => (Some(Platform::Macos), path),
+            Some(("windows", path)) => (Some(Platform::Windows), path),
+            Some((prefix, _)) if prefix.bytes().all(|byte| byte.is_ascii_alphabetic()) => {
+                return Err(format!("unknown target platform {prefix}"));
+            }
+            _ => (None, text.as_str()),
+        };
+        if patch
+            .targets
+            .iter()
+            .any(|(existing, _)| existing == &platform)
+        {
+            return Err("target is specified more than once for the same platform".into());
+        }
+        patch.targets.push((platform, Some(value.to_owned())));
+    }
+    for property in &args.reset {
+        match property {
+            Property::Source => patch.source = Some(None),
+            Property::Target => patch.targets.push((None, None)),
+            Property::TargetLinux => patch.targets.push((Some(Platform::Linux), None)),
+            Property::TargetMacos => patch.targets.push((Some(Platform::Macos), None)),
+            Property::TargetWindows => patch.targets.push((Some(Platform::Windows), None)),
+            Property::Ownership => patch.ownership = Some(None),
+            Property::Permissions => patch.permissions = Some(None),
+            Property::Takeover => patch.takeover = Some(None),
+        }
+    }
+    Ok(patch)
+}
+
 pub(crate) fn choices(
     args: &ChoicesArgs,
     host: &HostContext,

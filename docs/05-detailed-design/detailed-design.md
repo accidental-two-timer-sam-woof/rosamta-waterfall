@@ -229,6 +229,8 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 
 ### 3.4 開發骨架的實作範圍
 
+`manage::ManifestService` 實作 `add`、`modify`、`forget`。透過 `docedit::Editor` 保留 BOM、換行和既有值的 decor，並在提交前以設定解析器重新讀取 manifest。新增屬性的縮排依 toml_edit 預設，尚未複製同表最後一個鍵的縮排。`forget` 依 §5.13 先提交 `forget_pending`，再改 manifest 與清除紀錄；套用時會保留這些標記的目標。
+
 `diff` 和 `status` 共用 `apply::analyze`。`preflight` 建立期望內容，`plan` 比對狀態的雙基準並回傳計畫。`diff` 另外用 similar 產生 unified diff。Windows 的路徑鍵目前以 Unicode 小寫比較，Linux 與 macOS 以原字串比較。檔案系統的大小寫別名、跨路徑身分與中途置換仍需依 §6 驗收。規劃目前只對一般檔案執行接管與清除，其他類型會保留。
 
 `apply::deploy` 先確認 manifest 可載入，再取得狀態鎖，於持鎖後重新預檢。狀態與目標以綁定的檔案操作寫入。Unix 替換使用交換式改名，Windows 使用 [ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew) 保留目標的 DACL，並核對替換留下的舊檔；刪除使用經核對的檔案 handle。若處理一般檔案時失敗，`recovery::Journal` 以本次觀測與已保存的內容反向回復。交易快照的檔名為 `before-<項目序號>`；若程序中止或回復失敗，後續套用會提示保留的交易目錄，仍需人工核對。這一版以檔案替換處理只改 Unix 權限的項目，Windows 的新目錄沿用上層 ACL。這些情況以及符號連結接管與回復仍待 §6 的完整驗收。

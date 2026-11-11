@@ -166,4 +166,24 @@ impl State {
         bytes.push(b'\n');
         Ok(bytes)
     }
+
+    pub fn commit(
+        &mut self,
+        fs: &dyn FileSystem,
+        records: BTreeMap<String, Record>,
+    ) -> Result<(), String> {
+        let bytes = Self::encode(&records)?;
+        self.before = fs
+            .change(
+                &self.path,
+                self.before.as_ref(),
+                Some(crate::fs::Replacement {
+                    bytes: &bytes,
+                    mode: Some(0o600),
+                }),
+            )
+            .map_err(|error| format!("{}: {error}", self.path))?;
+        self.records = records;
+        Ok(())
+    }
 }
