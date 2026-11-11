@@ -1012,8 +1012,10 @@ pub struct OperationResult {
 
 **forget**（FR-MAN-025）依 §5.13 的三個步驟：
 
-1. 載入狀態檔。損毀時失敗，不改動任何檔案（REL-004）。找出名稱相同的所有紀錄：同一個輸出可能有兩筆紀錄（§5.10）。
-2. 有紀錄、而且有任何一筆沒有 `forget_pending` 時，全部加上 `forget_pending`，提交狀態檔。
+1. 載入狀態檔。損毀時失敗，不改動任何檔案（REL-004）。找出這個輸出的所有紀錄：
+   - 名稱相同的紀錄。同一個輸出可能有兩筆紀錄（§5.10）。
+   - 輸出仍在 manifest 中、有目前平台的目標時，位置鍵與該目標相同（§6.2）、名稱不屬於 manifest 中其他輸出的紀錄。輸出改名後，保留的項目不改紀錄（§4.12），紀錄可能仍是舊名稱；只以名稱比對會漏掉它，manifest 移除後它就成為清除項目，未修改的檔案會被刪除，違反 FR-MAN-025。目標無法展開或走訪失敗時，指令失敗，不改動任何檔案。
+2. 有紀錄、而且有任何一筆沒有 `forget_pending` 或名稱不同時，全部加上 `forget_pending`，名稱改成這個輸出的名稱，提交狀態檔。這樣第 3 步之後中止時，再次執行能以名稱找到這些紀錄。
 3. 輸出仍在 manifest 中時：使用者輸出移除 `[outputs.<名稱>]` 與上方的註解；內建輸出把 `[builtin.<名稱>]` 改成只有 `removed = true`，原有的其他屬性一併移除。取代 manifest。
 4. 有紀錄時，刪除這些紀錄，提交狀態檔。
 
@@ -1030,6 +1032,7 @@ pub struct OperationResult {
 | `manage.name-taken` | 指定的名稱已被使用，或產生的名稱到 `-99` 仍被占用 |
 | `manage.copy-location` | 來源副本的名稱到 `-99` 仍被占用 |
 | `manage.unknown-output` | 沒有這個輸出，列出相近的名稱 |
+| `manage.target-unavailable` | 停止管理時，輸出目前平台的目標無法展開或走訪失敗，無法找出舊名稱的紀錄 |
 | `manage.builtin-removed` | 修改已移除的內建輸出，提示先刪除 `[builtin.*]` 表格 |
 | `manage.invalid-patch` | 修改的值不合法，或 `Reset` 必要的屬性 |
 | `manage.concurrent-edit` | manifest 或狀態檔在指令執行期間被修改 |
@@ -1492,6 +1495,7 @@ pub enum RetainReason {
 
 pub enum RecordChange {
     Keep,                                                     // record_before 不變
+    Rename,                                                   // 只把 record_before 的名稱改成本項目的輸出名稱
     Remove,                                                   // 刪除 record_before
     Put { observed: ComparisonMetadata, desired: ComparisonMetadata }, // 取代 record_before，或新增
 }
@@ -1520,12 +1524,13 @@ C3 以字串表示的 `action`、`disposition`、`reason` 改成 enum，`reason`
 - `targets`：每個啟用、在 manifest 中、有目前平台 `target` 且能展開的輸出一項。無法展開的不列入，由 `check_inputs` 回報。`key` 經由 `FileSystem::location_key` 取得；上層目錄是連結時為 `LinkInPath`，`check_targets` 回報 `preflight.linked-parent`，其他走訪錯誤回報 `preflight.target-path`。保留位置來自 `Layout::reserved`。
 - 期望內容：範本以 `render` 渲染，原樣複製使用 `LoadedSource::Verbatim` 的位元組。`metadata().mode` 只在輸出宣告了權限，而且平台是 Linux 或 macOS 時有值（§5.10）。渲染錯誤記在 `diags`，該輸出不進入計畫，`plan` 回傳 `Err`。
 - 觀測：每個啟用輸出的目標與每筆紀錄的目標各觀測一次（`inspect`）。`keep_current` 為 `false` 時不保留內容，只計算 SHA-256。
-- 紀錄的比對：每筆紀錄的 `target` 轉成位置鍵（§6.2），與啟用輸出的位置鍵比較；`Same` 的紀錄是該輸出的紀錄，**不論名稱是否相同**。輸出改名而目標不變時，紀錄沿用並改成新名稱，不清除後重建。比對後，依 §5.11 的「紀錄位置確認」檢查父目錄的 `PersistentId`。位置鍵相同的紀錄超過一筆時，全部視為位置無法確認。
+- 紀錄的比對：每筆紀錄的 `target` 轉成位置鍵（§6.2），與啟用輸出的位置鍵比較；`Same` 的紀錄是該輸出的紀錄，**不論名稱是否相同**。輸出改名而目標不變時，紀錄沿用，不清除後重建；名稱的更新見下面的 `Rename`。比對後，依 §5.11 的「紀錄位置確認」檢查父目錄的 `PersistentId`。位置鍵相同的紀錄超過一筆時，全部視為位置無法確認。
 - 啟用的輸出依 §5.11 決定 `action`、`disposition` 與 `record`：
   - 有紀錄而且位置確認、目標是一般檔案時，依 §5.11 的五列。第 5 列的 drift 衝突依 `choices` 決定 `Resolve(Overwrite)`、`Resolve(Accept)` 或 `Retain(DriftConflict)`。
   - 沒有紀錄、位置無法確認，或目標不是一般檔案時，依 §5.11 的未受管理規則：一般檔案或連結，有接管授權為 `Takeover`，否則 `Retain(Unmanaged(類型))`。目錄與其他類型沒有接管授權時為 `Retain(Unmanaged(類型))`；有接管授權時，`check_plan` 回報 `preflight.unsupported-type`（04 §3.1）。
   - `create-only` 依 §5.11：目標存在時為 `Unchanged`、`Proceed`、`RecordChange::Keep`。
   - 比對到的紀錄帶有 `forget_pending` 時一律 `Retain(ForgetPending)`。
+  - 比對到的紀錄名稱與本輸出不同時，依上述規則得到 `RecordChange::Keep` 的項目改為 `RecordChange::Rename`，保留的項目除外；`Put` 本來就以本輸出的名稱寫入。所以輸出改名而路徑與內容都沒變時（§5.11 第 3 列、`create-only` 的目標已存在），紀錄也改成新名稱。`Rename` 的項目只更新紀錄，結果為完成，與其他預定完成的項目一樣在提交前重檢（§6.6 第 3 步）。保留的項目依 FR-APL-009 不改紀錄，名稱維持舊的，直到之後某次套用不再保留它；`forget` 因此另外以位置鍵找紀錄（§4.8）。
 - 沒有被啟用輸出比對到的紀錄，各產生一個清除項目，依 §5.11 的清除表。觀測遇到 `LinkInPath` 時為 `Retain(LocationUnconfirmed)`；位於保留位置時為 `Retain(Reserved)`；已修改而 `choices` 指定刪除時為 `Resolve(Delete)`。
 - 嚴格模式：drift 衝突一律為 `Retain(DriftConflict)`，不套用 `choices`（03 §12 第 1 項），`strict_blocked()` 為 `true`。
 - `Selector::Path` 以位置鍵與項目比較。沒有比對到任何 drift 衝突（`drift`）或已修改的舊輸出（`delete_modified`）時，回報警告 `apply.choice-unmatched`。同一個項目同時被指定覆寫與接受時，回報錯誤 `apply.choice-conflict`；`All` 與 `Path` 都指定時，`Path` 優先。
@@ -1686,7 +1691,7 @@ C3 的 `ApplyReport.exitCode` 改為 `outcome()`：core 不決定 exit code，§
 **後置條件**：
 
 - 依 §6.6 的六個步驟。計畫有要改動的目標或要提交狀態時才呼叫 `RecoveryManager::begin`；否則直接執行步驟 3 與 5。
-- 新的狀態從 `plan.state()` 複製，依每個 `Done` 項目的 `RecordChange` 修改：`Remove` 刪除 `record_before`；`Put` 刪除 `record_before`，再加入新紀錄，名稱與目標是本項目的，`parent` 取自操作後（或規劃時，若沒有操作）父目錄的 `PersistentId`。保留的項目不改紀錄（FR-APL-009）。新狀態與載入時的位元組相同時不提交。
+- 新的狀態從 `plan.state()` 複製，依每個 `Done` 項目的 `RecordChange` 修改：`Rename` 只把 `record_before` 的名稱改成本項目的輸出名稱，其他欄位不變；`Remove` 刪除 `record_before`；`Put` 刪除 `record_before`，再加入新紀錄，名稱與目標是本項目的，`parent` 取自操作後（或規劃時，若沒有操作）父目錄的 `PersistentId`。保留的項目不改紀錄（FR-APL-009）。新狀態與載入時的位元組相同時不提交。
 - 步驟 3、5 的核對以 `inspect` 進行：寫入的項目核對身分與 `written`；刪除的項目核對仍不存在，父目錄相同；其他項目核對身分、版本與宣告的權限仍與 `observation` 相同。狀態檔核對身分與版本。
 - 任何一步失敗，停止處理後續項目，呼叫 `rollback`。失敗的項目為 `Failed`，已處理的項目依回復結果為 `Reverted` 或 `NotReverted`，未處理的為 `NotRun`，保留的項目仍為 `Retained`。drift 衝突與未授權的接管不是執行錯誤，不觸發回復（03 S5）。
 - `outcome()`：有 `failure` 為 `Failed`；否則沒有保留項目為 `Completed`（包括空計畫，FR-APL-006）；有完成也有保留為 `Partial`（FR-APL-007）；只有保留為 `Failed`（FR-APL-008）。「不變」算完成。
@@ -2207,13 +2212,13 @@ SEC-001：狀態檔只有名稱、路徑、檔案編號、權限位元與 SHA-25
 | --- | --- | --- | --- | --- |
 | 1 | 目標不存在 | 建立 | — | O = D = N |
 | 2 | C 符合 N | 不變 | O ≠ C 或 D ≠ N 時只更新紀錄，項目為完成（FR-DRF-002） | O = C，D = N |
-| 3 | 沒有外部修改，來源沒有改變 | 不變 | —（曾接受 drift 時，目標維持接受的內容） | 不變 |
+| 3 | 沒有外部修改，來源沒有改變 | 不變 | —（曾接受 drift 時，目標維持接受的內容）；紀錄的名稱與輸出不同時只改名稱，項目為完成（§4.12） | 不變，名稱為本輸出的名稱 |
 | 4 | 沒有外部修改，來源改變 | 更新 | 內容不同才重寫；權限不同才變更（FR-PLN-002） | O = D = N |
 | 5 | 有外部修改 | drift 衝突 | 略過、覆寫或接受（FR-DRF-004–006）；嚴格模式下整批不寫入（FR-DRF-009） | 略過：不變；覆寫：O = D = N；接受：O = C，D = N |
 
 沒有紀錄、或紀錄位置無法確認的一般檔案：C 符合 N 時直接納管，O = C，D = N（FR-MAN-021）；不符合時，有接管授權就備份後寫入，O = D = N，否則保留（FR-MAN-019、FR-MAN-020）。C 的內容相同但權限不同時不算符合，要變更權限也須接管授權，才不會在未授權的情況下改動未受管理的檔案。
 
-只在不存在時建立（FR-MAN-013）：目標不存在時建立，O = D = N；目標存在時為「不變」，不比較內容，不更新紀錄，不列為 drift。沒有紀錄而目標已存在時，也不建立紀錄。
+只在不存在時建立（FR-MAN-013）：目標不存在時建立，O = D = N；目標存在時為「不變」，不比較內容，除了改成本輸出的名稱（§4.12）以外不更新紀錄，不列為 drift。沒有紀錄而目標已存在時，也不建立紀錄。
 
 清除（輸出被移除、停用或改了目標路徑）：
 
@@ -2270,7 +2275,7 @@ removed = true
 
 **未完成的停止管理**：停止管理要寫兩個檔案，manifest 在來源目錄，狀態檔在狀態目錄，無法一次替換。04 §2 要求能辨識只完成一筆寫入的情況，在兩份資料一致前不清除、接管或改動該項目。寫入順序如下：
 
-1. 狀態檔：在該輸出的紀錄加上 `forget_pending: true`。
+1. 狀態檔：在該輸出的紀錄加上 `forget_pending: true`，紀錄的名稱改成該輸出的名稱（§4.8）。
 2. manifest：移除 `[outputs.<名稱>]`，或寫入 `[builtin.<名稱>] removed = true`。
 3. 狀態檔：刪除該紀錄。
 
@@ -3161,7 +3166,7 @@ core 另外啟用 `clippy::unwrap_used` 與 `clippy::expect_used`（§11.1）。
 | 來源更新與欄位查詢分期 | FR-DRF-008、FR-QRY-002 都納入第一版（§1.2），定案條件中的兩個延後前提都不成立 | 不需要 |
 | 非嚴格模式的互動 | 互動模式延後（§1.2），沒有「已指定的處理方式」與「互動詢問」的優先序問題 | 不需要；USE-002 見 §12.3 |
 
-**同路徑改名**：輸出改名，或移除一個輸出、另一個輸出使用同一個目標路徑時，§4.12 依位置鍵比對紀錄：位置鍵相同的紀錄就是新輸出的紀錄，不論名稱，套用後紀錄改成新的名稱。目標碰撞只比較啟用輸出的目標（§4.6 的 `check_targets`），狀態檔的紀錄不參與，所以新宣告與舊紀錄不構成碰撞。這種情況不產生清除項目，舊檔依 §5.11 啟用輸出的五列處理：
+**同路徑改名**：輸出改名，或移除一個輸出、另一個輸出使用同一個目標路徑時，§4.12 依位置鍵比對紀錄：位置鍵相同的紀錄就是新輸出的紀錄，不論名稱，套用後紀錄改成新的名稱；路徑與內容都沒變時也一樣（`RecordChange::Rename`）。項目被保留時，紀錄依 FR-APL-009 不改，仍是舊名稱，`forget` 以位置鍵找到它（§4.8）。目標碰撞只比較啟用輸出的目標（§4.6 的 `check_targets`），狀態檔的紀錄不參與，所以新宣告與舊紀錄不構成碰撞。這種情況不產生清除項目，舊檔依 §5.11 啟用輸出的五列處理：
 
 - 舊檔沒有外部修改：檔案直接移交給新輸出。新期望相同時不變，不同時更新（第 3、4 列），不先刪除再建立。
 - 舊檔有外部修改：drift 衝突（第 5 列），預設略過，保留檔案與紀錄，新輸出不覆寫它（04 §3.1）。使用者指定覆寫或接受時才處理（FR-DRF-005、FR-DRF-006）。
