@@ -127,3 +127,66 @@ fn invalid_arguments_fail_before_dispatch() {
     );
     assert!(String::from_utf8_lossy(&valid.stderr).contains("cli.not-implemented"));
 }
+
+#[test]
+fn queries_resolve_profile_values_and_report_template_references() {
+    let home = temporary_home().unwrap();
+    let source = home.path().join(".local/share/rosamta");
+    fs::create_dir_all(source.join("modules")).unwrap();
+    fs::write(
+        source.join("manifest.toml"),
+        r#"
+[outputs.sample]
+template = "sample.j2"
+target = "~/.sample"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        source.join("profile.toml"),
+        "[[rules]]\nenable = [\"sample\"]\n[rules.values.theme]\nforeground = \"#AABBCC\"\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("modules/colors.toml"),
+        "[values.theme]\nforeground = \"#112233\"\n",
+    )
+    .unwrap();
+    fs::write(source.join("sample.j2"), "{{ theme.foreground }}\n").unwrap();
+    let output = run(
+        &home,
+        &["query", "value", "theme.foreground", "--format", "json"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["result"]["value"], "#aabbcc");
+    assert_eq!(value["result"]["source"]["layer"], "profile");
+    assert_eq!(value["result"]["overridden"][1]["layer"], "user-module");
+
+    let output = run(
+        &home,
+        &["query", "refs", "theme.foreground", "--format", "json"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let listed = value["result"]["outputs"].as_array().unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|output| output["name"] == "sample" && output["enabled"] == true)
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|output| output["name"] == "ghostty" && output["enabled"] == false)
+    );
+    assert!(!home.path().join(".sample").exists());
+}

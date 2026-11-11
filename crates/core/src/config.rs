@@ -1,6 +1,7 @@
 //! Configuration types, loading, schemas and built-in resources (05 §4.2–4.3).
 
 pub mod builtin;
+pub mod load;
 pub mod schema;
 
 use std::{collections::BTreeMap, fmt};

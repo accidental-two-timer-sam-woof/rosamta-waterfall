@@ -1,13 +1,19 @@
-use std::{io::Write, process::ExitCode};
+use std::{env, io::Write, process::ExitCode};
 
 use rosamta_core::{
-    config::schema::{self, Kind},
+    config::{
+        load::Config,
+        schema::{self, Kind},
+    },
     diag::{DiagCode, Diagnostics},
+    query::QueryService,
+    resolve,
 };
+use rosamta_platform::{SystemFs, host};
 use serde_json::Value;
 
 use crate::{
-    cli::{Cli, Command, Format, Schema},
+    cli::{Cli, Command, Format, Query, Schema},
     output::{json, text},
 };
 
@@ -18,6 +24,7 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
         Command::Schema(schema) => describe(schema)
             .map_err(|error| diagnostics.error(DiagCode::InvalidConfig, error))
             .ok(),
+        Command::List | Command::Query(_) => inspect(&cli.command, &mut diagnostics),
         _ => {
             diagnostics.error(
                 DiagCode::CommandUnavailable,
@@ -26,7 +33,7 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
             None
         }
     };
-    let code = u8::from(result.is_none());
+    let code = u8::from(result.is_none() || diagnostics.has_errors());
 
     let output = match cli.format {
         Format::Text => {
@@ -50,6 +57,51 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
     }
 
     ExitCode::from(code)
+}
+
+fn inspect(command: &Command, diagnostics: &mut Diagnostics) -> Option<(Value, String)> {
+    fn report<T>(result: Result<T, impl ToString>, diagnostics: &mut Diagnostics) -> Option<T> {
+        result
+            .map_err(|error| diagnostics.error(DiagCode::InvalidConfig, error.to_string()))
+            .ok()
+    }
+    let host = report(host::collect(), diagnostics)?;
+    let fs = report(SystemFs::open(&host.home), diagnostics)?;
+    let config = report(
+        Config::load(&fs, &host).map_err(|errors| errors.join("\n")),
+        diagnostics,
+    )?;
+    for name in config.enabled(&host).1 {
+        diagnostics.warning(
+            DiagCode::UnknownOutput,
+            format!("profile enables unknown or removed output {name}"),
+        );
+    }
+    let resolved = report(
+        resolve::resolve(&config, &host).map_err(|errors| errors.join("\n")),
+        diagnostics,
+    )?;
+    let query = QueryService {
+        config: &config,
+        resolved: &resolved,
+        fs: &fs,
+        host: &host,
+    };
+    let result = match command {
+        Command::List => Ok(query.list()),
+        Command::Query(Query::Refs { reference }) => query.refs(reference),
+        Command::Query(Query::Output { key }) => {
+            query.output(key, &report(env::current_dir(), diagnostics)?)
+        }
+        Command::Query(Query::Value { field }) => query.value(field),
+        _ => return None,
+    }
+    .map_err(|error| diagnostics.error(DiagCode::QueryFailed, error))
+    .ok()?;
+    for error in result.errors {
+        diagnostics.error(DiagCode::QueryFailed, error);
+    }
+    Some((result.value, result.lines.join("\n")))
 }
 
 fn describe(schema: &Schema) -> Result<(Value, String), String> {

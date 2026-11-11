@@ -1,0 +1,10 @@
+{#- rosamta
+program = "sh"
+format_version = "POSIX.1-2017"
+[requires]
+shellrc = 1
+-#}
+{% if shellrc.env is not none %}{% for key, value in shellrc.env | items %}export {{ key }}={{ value | sh_quote }}
+{% endfor %}{% endif %}{% if shellrc.aliases is not none %}{% for key, value in shellrc.aliases | items %}alias {{ (key ~ "=" ~ value) | sh_quote }}
+{% endfor %}{% endif %}{% if shellrc.path is not none %}export PATH={{ shellrc.path | join(":") | sh_quote }}:"$PATH"
+{% endif %}

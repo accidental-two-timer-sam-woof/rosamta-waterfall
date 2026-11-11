@@ -156,6 +156,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hostname"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-link",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -194,6 +205,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "minijinja"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "509eeb2603a84eccabb4d75f6ec8ba23b46bbf441aaeb863d6b83a5887fd51e4"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "once_cell"
@@ -247,6 +267,7 @@ dependencies = [
 name = "rosamta-core"
 version = "0.1.0-dev"
 dependencies = [
+ "minijinja",
  "serde",
  "serde_json",
  "syn",
@@ -257,7 +278,10 @@ dependencies = [
 name = "rosamta-platform"
 version = "0.1.0-dev"
 dependencies = [
+ "hostname",
  "rosamta-core",
+ "rustix",
+ "windows-sys",
 ]
 
 [[package]]

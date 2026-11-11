@@ -1,0 +1,18 @@
+{#- rosamta
+program = "ghostty"
+format_version = "1.2"
+[requires]
+theme = 1
+font = 1
+terminal = 1
+-#}
+foreground = {{ theme.foreground }}
+background = {{ theme.background }}
+{% if theme.cursor is not none %}cursor-color = {{ theme.cursor }}
+{% endif %}{% if theme.opacity is not none %}background-opacity = {{ theme.opacity }}
+{% endif %}{% for color in theme.ansi %}palette = {{ loop.index0 }}={{ color }}
+{% endfor %}{% if font.family is not none %}font-family = {{ font.family | tojson }}
+{% endif %}{% if font.size is not none %}font-size = {{ font.size }}
+{% endif %}{% if terminal.cursor_shape is not none %}cursor-style = {{ terminal.cursor_shape | replace("beam", "bar") }}
+{% endif %}{% if terminal.keybindings is not none %}{% set actions = {"copy":"copy_to_clipboard","paste":"paste_from_clipboard","new_tab":"new_tab","close_tab":"close_tab","next_tab":"next_tab","previous_tab":"previous_tab","increase_font_size":"increase_font_size:1","decrease_font_size":"decrease_font_size:1","reset_font_size":"reset_font_size"} %}{% for key, action in terminal.keybindings | items %}keybind = {{ key }}={{ actions[action] }}
+{% endfor %}{% endif %}

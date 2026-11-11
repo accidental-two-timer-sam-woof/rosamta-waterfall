@@ -1,0 +1,42 @@
+{#- rosamta
+program = "alacritty"
+format_version = "0.15"
+[requires]
+theme = 1
+font = 1
+terminal = 1
+-#}
+[colors.primary]
+foreground = "{{ theme.foreground }}"
+background = "{{ theme.background }}"
+{% if theme.cursor is not none %}
+[colors.cursor]
+cursor = "{{ theme.cursor }}"
+{% endif %}{% set colors = ["black","red","green","yellow","blue","magenta","cyan","white"] %}
+[colors.normal]
+{% for name in colors %}{{ name }} = "{{ theme.ansi[loop.index0] }}"
+{% endfor %}
+[colors.bright]
+{% for name in colors %}{{ name }} = "{{ theme.ansi[loop.index0 + 8] }}"
+{% endfor %}{% if theme.opacity is not none %}
+[window]
+opacity = {{ theme.opacity }}
+{% endif %}{% if font.size is not none %}
+[font]
+size = {{ font.size }}
+{% endif %}{% if font.family is not none %}
+[font.normal]
+family = {{ font.family | tojson }}
+{% endif %}{% if terminal.cursor_shape is not none %}
+[cursor.style]
+shape = "{{ {"block":"Block","beam":"Beam","underline":"Underline"}[terminal.cursor_shape] }}"
+{% endif %}{% if terminal.scrollback is not none %}
+[scrolling]
+history = {{ terminal.scrollback }}
+{% endif %}{% if terminal.keybindings is not none %}{% set actions = {"copy":"Copy","paste":"Paste","new_tab":"CreateNewWindow","close_tab":"Quit","next_tab":"SelectNextTab","previous_tab":"SelectPreviousTab","increase_font_size":"IncreaseFontSize","decrease_font_size":"DecreaseFontSize","reset_font_size":"ResetFontSize"} %}
+{% for key, action in terminal.keybindings | items %}{% set parts = key | split("+") %}
+[[keyboard.bindings]]
+key = {{ parts[-1] | upper | tojson }}
+{% if parts | length > 1 %}mods = {{ parts[:-1] | join("|") | tojson }}
+{% endif %}action = {{ actions[action] | tojson }}
+{% endfor %}{% endif %}

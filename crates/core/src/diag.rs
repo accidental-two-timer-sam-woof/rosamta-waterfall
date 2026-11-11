@@ -3,12 +3,14 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
+    Warning,
 }
 
 impl Severity {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Error => "error",
+            Self::Warning => "warning",
         }
     }
 }
@@ -17,6 +19,8 @@ impl Severity {
 pub enum DiagCode {
     CommandUnavailable,
     InvalidConfig,
+    UnknownOutput,
+    QueryFailed,
 }
 
 impl DiagCode {
@@ -24,6 +28,8 @@ impl DiagCode {
         match self {
             Self::CommandUnavailable => "cli.not-implemented",
             Self::InvalidConfig => "config.invalid",
+            Self::UnknownOutput => "config.unknown-output",
+            Self::QueryFailed => "query.failed",
         }
     }
 }
@@ -49,5 +55,19 @@ impl Diagnostics {
 
     pub fn iter(&self) -> impl Iterator<Item = &Diagnostic> {
         self.0.iter()
+    }
+
+    pub fn warning(&mut self, code: DiagCode, message: impl Into<String>) {
+        self.0.push(Diagnostic {
+            severity: Severity::Warning,
+            code,
+            message: message.into(),
+        });
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.0
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Severity::Error)
     }
 }

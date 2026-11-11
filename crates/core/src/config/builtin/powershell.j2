@@ -1,0 +1,10 @@
+{#- rosamta
+program = "powershell"
+format_version = "5.1"
+[requires]
+shellrc = 1
+-#}
+{% if shellrc.env is not none %}{% for key, value in shellrc.env | items %}[Environment]::SetEnvironmentVariable({{ key | ps_quote }}, {{ value | ps_quote }}, 'Process')
+{% endfor %}{% endif %}{% if shellrc.aliases is not none %}{% for key, value in shellrc.aliases | items %}Set-Alias -Name {{ key | ps_quote }} -Value {{ value | ps_quote }}
+{% endfor %}{% endif %}{% if shellrc.path is not none %}$env:PATH = {{ shellrc.path | join(";") | ps_quote }} + ';' + $env:PATH
+{% endif %}
