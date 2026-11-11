@@ -279,10 +279,13 @@ classDiagram
     }
     class ValueResolver
     class Planner {
-        +build(config, values, state) ApplyPlan
+        +targets(config, enabled) TargetSet
+        +plan(input) ApplyPlan
     }
     class PreflightChecker {
-        +validate(context, optionalPlan) Diagnostics
+        +check_inputs(context) TemplateValues
+        +check_targets(context, targets)
+        +check_plan(context, plan)
     }
     class Executor {
         +execute(plan) ApplyReport
@@ -358,8 +361,11 @@ StateLoadResult 區分成功、檔案不存在及無法讀取／損毀。不存�
 | ApplyService.preview(request) | `request: ApplyRequest`，包含預覽與衝突處理選項 | 回傳 `ApplyPlan`；協調設定載入、值解析、預檢與規劃，不寫入目標或狀態檔。 |
 | ApplyService.apply(request) | `request: ApplyRequest`，包含套用模式及衝突處理選項 | 回傳 `ApplyReport`；在持有寫入鎖後重新分析與產生計畫，不重用先前預覽的計畫；整批預檢與模式檢查通過後才交由 Executor 執行。 |
 | ConfigLoader.load() | 無顯式參數；來源位置由初始化紀錄及執行環境取得 | 成功時回傳 `EffectiveConfig`；載入來源設定與內建資源，合併輸出覆寫並保留診斷來源位置。 |
-| Planner.build(config, values, state) | `config: EffectiveConfig`；`values: ResolvedValues`；`state: StateFile` | 回傳 `ApplyPlan`；計算期望內容、建立／更新／刪除／不變動作、衝突與清除項目，不寫入目標或狀態檔。 |
-| PreflightChecker.validate(context, optionalPlan) | `context: AnalysisContext`，包含可取得的設定、主機資訊及診斷；`optionalPlan: Optional<ApplyPlan>` | 回傳 `Diagnostics`；檢查寫入前的阻擋問題。無法建立完整計畫時，仍可檢查不依賴計畫的部分。 |
+| Planner.targets(config, enabled) | `config: EffectiveConfig` 與 Profile 判定的啟用輸出 | 取得可檢查的目標集合 `TargetSet`，不必先渲染範本。 |
+| Planner.plan(input) | 輸入包含 `TemplateValues`、載入的來源、已檢查的目標、狀態及處理選項 | 回傳 `ApplyPlan`，包含期望內容、動作、衝突與清除項目。此階段唯讀。 |
+| PreflightChecker.check_inputs(context) | `context: AnalysisContext`，包含目前可取得的設定、解析值、來源、主機資訊與狀態載入結果 | 檢查欄位、必填、範本引用與格式相容性等輸入。成功時回傳 `TemplateValues`。 |
+| PreflightChecker.check_targets(context, targets) | `AnalysisContext` 與 `TargetSet` | 檢查目標碰撞、保留位置及路徑錯誤。即使輸入檢查失敗，仍檢查已取得的目標。 |
+| PreflightChecker.check_plan(context, plan) | `AnalysisContext` 與 `ApplyPlan` | 確認計畫要求的操作可執行，例如要接管的檔案類型受支援。 |
 | Executor.execute(plan) | `plan: ApplyPlan`，已通過預檢與模式檢查的計畫 | 回傳 `ApplyReport`；執行項目並提交狀態，發生執行錯誤時協調整批回復。 |
 | RecoveryManager.begin() | 無顯式參數；使用本批次上下文 | 建立回復上下文並保存原狀態檔資訊；失敗時不得開始變更目標。 |
 | RecoveryManager.capture(path) | `path: String`，將被變更的目標路徑 | 保存套用前的內容、權限及存在與否；失敗時不得繼續變更該目標。回復資料不寫入狀態檔。 |
@@ -391,6 +397,8 @@ ValueResolver 的方法與參數已於 C2 說明；此圖只參照該類別，�
 | EffectiveConfig | 合併後的有效設定，包含輸出宣告、模組、範本與 Profile。 |
 | ApplyRequest | 本次預覽或套用的選項；只包含第一版交付範圍，不提供延後的互動詢問。 |
 | AnalysisContext | 可取得的設定、解析值、主機資訊、狀態載入結果及累積診斷。 |
+| TargetSet | 可取得的啟用輸出目標及保留位置，供渲染前的路徑檢查。 |
+| TemplateValues | `check_inputs` 通過後產生，供 Planner 渲染範本。 |
 | Diagnostics | 檢查問題集合，提供來源位置、原因與可用的修正提示。 |
 | StateLoadResult | 狀態載入結果，區分成功、不存在與阻擋錯誤。 |
 | FileInspection | 檔案存在與否、內容比較所需資料及適用屬性。 |
@@ -422,34 +430,44 @@ sequenceDiagram
     C-->>A: 有效設定或診斷
     A->>S: load()
     S-->>A: 有效紀錄／不存在／損毀診斷
-    opt 設定可解析
+    opt 有可分析的設定
         A->>V: resolve(config, host, localSettings)
-        V-->>A: 最終值與來源，或同層衝突診斷
+        V-->>A: 原始值、來源與衝突診斷
+        A->>A: 依可取得的 Profile 判定啟用輸出並載入來源，不渲染範本
+        A->>P: targets(config, enabled)
+        P-->>A: 可檢查的目標集合
     end
-    A->>K: 檢查欄位、範本輸入與靜態引用
-    K-->>A: 可供渲染的值或診斷
-    opt 輸入檢查通過、狀態可用且具備產生計畫的資料
-        A->>P: build(config, values, state)
-        P-->>A: 計畫或診斷
+    A->>K: check_inputs(context)
+    K-->>A: TemplateValues 或診斷
+    opt 已取得目標集合，即使輸入檢查失敗
+        A->>K: check_targets(context, targets)
+        K-->>A: 目標檢查結果
     end
-    A->>K: validate(context, optionalPlan)
-    K-->>A: 彙整可取得的檢查問題
-    alt 任一阻擋問題
-        A-->>U: 回報問題，不寫入；套用 exit code = 1
-    else 可預覽或執行
-        alt 預覽
-            A-->>U: 計畫、差異、drift 與預期處理
-        else 嚴格套用且有 drift 衝突
-            A-->>U: 不寫入目標或狀態檔，exit code = 1
-        else 套用允許執行
-            A->>E: execute(plan)
-            E-->>A: ApplyReport
-            A-->>U: 逐項回報及 exit code
-        end
+    break 設定不完整、狀態載入錯誤或任一檢查失敗
+        A-->>U: 一次回報可辨識的問題，exit code = 1
+    end
+    A->>P: plan(含 TemplateValues 的輸入)，渲染並建立計畫
+    P-->>A: 計畫或診斷
+    break 無法建立計畫
+        A-->>U: 回報問題，exit code = 1
+    end
+    A->>K: check_plan(context, plan)
+    K-->>A: 計畫檢查結果
+    break 計畫檢查失敗
+        A-->>U: 回報問題，exit code = 1
+    end
+    alt 預覽
+        A-->>U: 計畫、差異、drift 與預期處理
+    else 嚴格套用且有 drift 衝突
+        A-->>U: 不寫入目標或狀態檔，exit code = 1
+    else 套用允許執行
+        A->>E: execute(plan)
+        E-->>A: ApplyReport
+        A-->>U: 逐項回報及 exit code
     end
 ```
 
-此圖的呼叫表示概念順序；錯誤資料不能傳入不適用的後續步驟。實作應在可繼續分析時收集所有可辨識問題，而非遇到第一項就停止診斷。必須先檢查欄位及範本輸入，再渲染與產生計畫；所有阻擋檢查必須在任何輸出寫入前完成。
+預檢依序檢查輸入、目標及完整計畫。前兩階段各自使用能取得的資料，同一次可回報欄位錯誤、manifest 屬性錯誤與目標碰撞（USE-004）。兩階段都通過才渲染及建立計畫。輸出與狀態檔的寫入要等到所有檢查通過。
 
 預覽不寫入目標與狀態檔，也不執行使用者定義的外部命令。預檢清單包括 manifest 語法與未知屬性、重複輸出名、平台目標缺失、home 範圍、欄位型別／範圍／必填、同層衝突，以及正規化後的目標碰撞（包含不區分大小寫的檔案系統）。第一版亦檢查模組格式版本相容性。不存在的狀態檔視為空紀錄，不產生舊檔清除計畫；損毀則預檢失敗。依賴檢查不在第一版範圍。套用在持有寫入鎖後重新分析與產生計畫，不重用先前預覽的計畫；鎖只協調 rosamta 寫入者，仍須防範外部程式修改。
 
@@ -539,15 +557,15 @@ sequenceDiagram
     participant A as app:ApplyService
     participant P as planner:Planner
     participant F as fs:FileSystem
-    A->>P: build(config, values, state)
+    A->>P: plan(input)
     loop 每個未由目前啟用輸出接續管理的舊目標
         P->>F: inspect(oldPath)
         F-->>P: 位置身分、存在與否、類型及比較資訊
-        alt 停止管理尚未完成、位於保留位置或無法確認原位置
+        alt 停止管理尚未完成或位於保留位置
             P->>P: 保留目標與原紀錄，回報原因
-        else 已確認原位置且檔案不存在
+        else 已安全確認目標或其父目錄不存在
             P->>P: 加入移除紀錄項目
-        else 目標被換成連結或其他非一般檔案
+        else 無法核對原位置，或目標是連結或其他非一般檔案
             P->>P: 保留目標與原紀錄，回報原因
         else 沒有外部修改
             P->>P: 加入刪除項目
@@ -560,7 +578,9 @@ sequenceDiagram
     P-->>A: 含清除項目的完整計畫
 ```
 
-檢查通過後依 S5 執行，Executor 不參與本圖的計畫階段。刪除時同步移除紀錄；保留時檔案與原紀錄都不變；已確認原位置、沒有其他保留條件且檔案不存在時，只移除紀錄並記完成；位置無法確認時保留紀錄並回報原因。第一版納入明確刪除已修改舊檔（FR-DRF-014）；未指定時保留，不提供互動詢問（FR-DRF-017 延後）。手動從 manifest 移除、停用、改目標路徑，都可能產生清除項目；「停止管理」指令則移除狀態紀錄並保留檔案，後續不清除它。
+缺檔必須由安全走訪確認。若走訪遇到連結、非目錄阻擋、讀取錯誤，或發現現存父目錄的身分與紀錄不符，不視為缺檔；保留原紀錄並回報原因。若安全確認目標或其父目錄不存在，且沒有其他保留條件，只移除紀錄並記完成（FR-DRF-015）。
+
+檢查通過後依 S5 執行，Executor 不參與本圖的計畫階段。刪除時同步移除紀錄；保留時檔案與原紀錄都不變。第一版納入明確刪除已修改舊檔（FR-DRF-014）；未指定時保留，不提供互動詢問（FR-DRF-017 延後）。手動從 manifest 移除、停用、改目標路徑，都可能產生清除項目；「停止管理」指令則移除狀態紀錄並保留檔案，後續不清除它。
 
 ## 9. 循序圖 S5：執行與整批回復
 
