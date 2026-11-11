@@ -1,3 +1,11 @@
+# 初步設計 UML
+
+對照基準：SRS 1.5（2026/11/11）、設計分析與詳細設計，Git 基準 `8db4b567c6336e836c078e398ca6820fd1c3a167`。
+
+本文件保留 C1–C4 與 S1–S6 的概念層級；方法名稱是責任摘要，並非 Rust API。實際型別、鎖定參數、診斷與操作契約以 `../05-detailed-design/detailed-design.md` 及該目錄的 `uml.md` 為準。
+
+第一版依 SRS A.3 延後 12 條需求；互動詢問、依賴檢查、編輯來源內容及指定欄位管理不列入本次流程。其餘 conditional 功能依詳細設計的第一版範圍處理，不再一律視為待定。
+
 ## 1. 類別圖 C1：設定資料模型
 
 此圖表示解析與合併後的有效設定。內建輸出與使用者覆寫如何保存在檔案中，不由此圖決定。所有輸出共用一份來源目錄 manifest；模組只放欄位，不持有輸出宣告。
@@ -40,7 +48,7 @@ classDiagram
 ```
 圖中的 + 表示公開可見的成員；本圖尚未指定其可寫性與實作封裝方式，於詳細設計時決定。
 
-`sourceKind` 區分範本與原樣複製；每個輸出只選其中一種來源。原樣複製必須保留位元組，不經範本處理。權限未宣告時，不變更既有權限；Windows 不套用 POSIX 權限位元。型別與版本相容資訊可在詳細設計補充；conditional 的版本檢查及依賴檢查不應被當成已確定交付。
+`sourceKind` 區分範本與原樣複製；每個輸出只選其中一種來源。原樣複製必須保留位元組，不經範本處理。權限未宣告時，不變更既有權限；Windows 不套用 POSIX 權限位元。型別、格式與版本相容規則依詳細設計；FR-TPL-004、005 的模組格式相容檢查納入第一版，依賴檢查則依 SRS A.3 延後。
 
 Template 的程式與設定格式版本欄位對應 essential 的 FR-TPL-002，內建範本必填；這與 conditional 的「模組格式版本及其相容檢查」不同。
 
@@ -57,7 +65,7 @@ Field 由 Module 宣告，Template 引用欄位值產生內容。Manifest 不另
 | OutputDefinition.sourceKind | String | 區分 template（範本）與 verbatim（原樣複製）；這兩個值是設計命名建議。 |
 | OutputDefinition.sourcePath | String | 範本或複製來源的位置；來源目錄內的路徑相對於來源目錄解讀，內建資源如何定位留給詳細設計。 |
 | OutputDefinition.targetPaths | `Map<Platform, String>` | key 為 Linux、Windows、macOS；value 為該平台尚未展開的目標路徑字串。每個平台最多一個值；不要求每個輸出都有三平台路徑，但啟用時必須有目前平台的路徑。 |
-| OutputDefinition.ownership | String | 完整管理為預設；只在不存在時建立為 conditional；只管理指定欄位為 optional，不表示三者都已決定實作。 |
+| OutputDefinition.ownership | String | 第一版提供完整管理（預設）及只在不存在時建立（FR-MAN-013）；只管理指定欄位（FR-MAN-014）延後。 |
 | OutputDefinition.permissions | `Optional<PermissionBits>` | 可不宣告的 POSIX 權限位元，如 0600；非任意字串。未宣告時不變更既有權限，Windows 不變更 POSIX 權限位元。實際編碼留待詳細設計。 |
 | OutputDefinition.takeover | Boolean | 是否允許在既有未受管理檔案內容不同時，先備份再接管；不是略過備份或忽略 drift 的開關。 |
 | Module.name | String | 模組識別名稱，例如 theme、font。 |
@@ -73,7 +81,7 @@ Field 由 Module 宣告，Template 引用欄位值產生內容。Manifest 不另
 
 ## 2. 類別圖 C2：Profile 與欄位解析
 
-重複出現的類別僅為跨圖參照。條件內是 AND，同一輸出的多個啟用條件是 OR；沒有被啟用的輸出不得寫入。
+重複出現的類別僅為跨圖參照。條件內是 AND，同一輸出的多個啟用條件是 OR；未啟用的輸出不產生新的輸出寫入，既有受管理舊檔的清除另依 S4 處理。
 
 ```mermaid
 classDiagram
@@ -84,69 +92,86 @@ classDiagram
         +os : Optional
         +hostname : Optional
         +tags : String[]
-        +fieldOverrides : Map
+        +fieldOverrides : Assignment[]
         +matches(host, localSettings) Boolean
+    }
+    class LocalSettings {
+        +tags : String[]
+        +fieldOverrides : Assignment[]
+    }
+    class ResolvedValues {
+        +values : Map
+        +conflicted : FieldRef[]
     }
     class HostContext {
         +os : String
         +hostname : String
         +homeDirectory : String
     }
-    class LocalSettings {
-        +tags : String[]
-        +fieldOverrides : Map
-    }
     class ValueResolver {
         +resolve(config, host, localSettings) ResolvedValues
     }
-    class ResolvedValues {
-        +values : Map
-        +provenance : Map
+    class Assignment {
+        +field : FieldRef
+        +value : RawValue
+        +source : SourceLocation
     }
     class OutputDefinition
+
     Profile "1" *-- "0..*" ProfileRule : 包含
     ProfileRule "0..*" --> "0..*" OutputDefinition : 啟用
     ProfileRule ..> HostContext : 比對
     ProfileRule ..> LocalSettings : 取得標籤
+    ProfileRule "1" *-- "0..*" Assignment : 條件覆寫
+    LocalSettings "1" *-- "0..*" Assignment : 本機覆寫
     ValueResolver ..> Profile : 讀取符合條件的覆寫
     ValueResolver ..> LocalSettings : 讀取本機覆寫
     ValueResolver ..> ResolvedValues : 產生
-    ValueResolver ..> Module : 讀取模組欄位值
+    ValueResolver ..> Module : 讀取欄位宣告與內建預設值
     ValueResolver ..> HostContext : 取得主機資訊
 ```
 
-解析順序固定為內建預設值 → 使用者模組 → Profile → 本機設定；後者優先，未指定欄位保留低層值。
-同層重複設定是錯誤，不能以檔名或列出順序決定。`provenance` 記錄值的層級與來源位置，支援查詢。
+解析順序固定為內建預設值 → 使用者模組 → Profile → 本機設定；後者優先，未指定欄位保留低層值。覆寫以整個欄位值為單位，清單與對照表不逐項合併。
+
+只有條件成立的 Profile 規則參與覆寫。同層有多個來源設定同一欄位時，即使值相同，也須回報衝突並列出所有來源，不以檔名或列出順序決定。
+
+ResolvedValues 將解析後的原始值與來源一起保存，並記錄發生衝突的欄位。型別、範圍與必填條件由後續 PreflightChecker 檢查。
+
+未指定的主機條件不構成限制；作業系統、主機名稱與標籤條件皆未指定時，規則對所有主機成立。
 
 ### C2 成員與方法說明
 
-`Platform` 表示 Linux、Windows、macOS；`FieldRef` 表示模組與欄位的識別，例如 `theme.foreground`；`FieldValue` 為符合該欄位型別的值。
+`Platform` 表示 Linux、Windows、macOS；`FieldRef` 表示模組與欄位的識別，例如 `theme.foreground`；`RawValue` 表示尚待預檢驗證的原始值；`Resolved` 同時保存解析後的原始值與來源。
 
 | 類別／成員 | 型別 | 用途 |
 | --- | --- | --- |
-| Profile | 包含 `ProfileRule` 的容器 | 保存啟用輸出及覆寫欄位的條件規則；圖中以組合關係表示。 |
-| ProfileRule.os | `Optional<Platform>` | 限制作業系統；未指定則不限制。 |
-| ProfileRule.hostname | `Optional<String>` | 限制主機名稱；未指定則不限制。 |
-| ProfileRule.tags | `String[]` | 主機必須具備的標籤；同一條件內全部符合才成立。 |
-| ProfileRule.fieldOverrides | `Map<FieldRef, FieldValue>` | 條件成立時提供的 Profile 層欄位覆寫。 |
-| HostContext.os | `Platform` | 目前主機的作業系統。 |
-| HostContext.hostname | `String` | 目前主機名稱。 |
-| HostContext.homeDirectory | `String` | 使用者 home 的絕對路徑，供路徑展開與驗證。 |
-| LocalSettings.tags | `String[]` | 本機指定的標籤，供 Profile 比對。 |
-| LocalSettings.fieldOverrides | `Map<FieldRef, FieldValue>` | 本機設定層的欄位覆寫，優先序最高。 |
-| ResolvedValues.values | `Map<FieldRef, FieldValue>` | 四層解析後的最終欄位值。 |
-| ResolvedValues.provenance | `Map<FieldRef, ValueSource>` | 最終值的來源層級、檔案及可用的位置資訊。 |
+| Profile | 包含 ProfileRule 的容器 | 保存啟用輸出及覆寫欄位的條件規則。 |
+| ProfileRule.os | Optional<Platform> | 限制作業系統；未指定則不限制。 |
+| ProfileRule.hostname | Optional<String> | 限制主機名稱；未指定則不限制，比對時不分 ASCII 大小寫。 |
+| ProfileRule.tags | String[] | 主機必須具備的標籤，全部符合才成立。 |
+| ProfileRule.fieldOverrides | Assignment[] | 條件成立時提供的 Profile 層設定；保留每筆設定及來源，以偵測同層重複。 |
+| HostContext.os | Platform | 目前主機的作業系統。 |
+| HostContext.hostname | String | 目前主機名稱。 |
+| HostContext.homeDirectory | String | 使用者 home 的絕對路徑，供路徑展開與驗證。 |
+| LocalSettings.tags | String[] | 本機指定的標籤，供 Profile 比對。 |
+| LocalSettings.fieldOverrides | Assignment[] | 本機設定層的欄位覆寫，優先序最高；保留原始值與來源。 |
+| Assignment.field | FieldRef | 被設定的欄位，例如 theme.foreground。 |
+| Assignment.value | RawValue | 尚未通過欄位型別檢查的原始值。 |
+| Assignment.source | SourceLocation | 設定所在的檔案與位置，供診斷使用。 |
+| ResolvedValues.values | Map<FieldRef, Resolved> | 每個已解析欄位的原始值及來源；未設定任何值的欄位可不在其中。 |
+| ResolvedValues.conflicted | FieldRef[] | 發生同層重複設定的欄位，供預檢辨識衝突。 |
 
-`ValueSource` 是來源描述資料，其具體結構於詳細設計時決定。
+`Resolved` 的來源資訊包含覆寫層級、來源位置，以及適用時的 Profile 規則識別；具體結構以詳細設計為準。
 
 | 方法 | 參數 | 回傳與用途 |
 | --- | --- | --- |
-| ProfileRule.matches(host, localSettings) | `host: HostContext`；`localSettings: LocalSettings` | 回傳 `Boolean`，比對作業系統、主機名稱及本機標籤，判斷條件是否成立。 |
-| ValueResolver.resolve(config, host, localSettings) | `config: EffectiveConfig`，包含模組與 Profile 的有效設定；`host: HostContext`；`localSettings: LocalSettings` | 成功時回傳 `ResolvedValues`，依四層優先序解析值並保留來源；同層重複設定時回報診斷。 |
+| ProfileRule.matches(host, localSettings) | `host: HostContext`；`localSettings: LocalSettings` | 回傳 Boolean，比對作業系統、主機名稱及本機標籤，判斷條件是否成立。 |
+| ValueResolver.resolve(config, host, localSettings) | `config: EffectiveConfig`，包含欄位宣告、內建預設值、使用者模組設定及 Profile；`host: HostContext`；`localSettings: LocalSettings` | 回傳 ResolvedValues，依四層優先序解析原始值並保留來源；同層重複設定時記錄衝突並回報診斷，不在此進行型別驗證。 |
 
-圖中的方法簽名只列成功回傳型別；診斷結果的具體表示方式於詳細設計時決定。
-
+圖中的方法為概念摘要，省略診斷參數；實際簽名與資料結構以詳細設計為準。
 ## 3. 類別圖 C3：套用資料模型
+
+本圖區分規劃、執行結果與持久化狀態：ApplyPlan 描述本次準備執行的工作，ApplyReport 記錄實際結果，StateFile 保存下次比較所需的管理紀錄。類別與成員名稱為概念摘要，實際結構以詳細設計為準。
 
 ```mermaid
 classDiagram
@@ -157,6 +182,8 @@ classDiagram
         +action : String
         +disposition : String
         +reason : String
+        +desiredContent : Optional
+        +observation : Observation
     }
     class ApplyReport {
         +exitCode : Integer
@@ -168,13 +195,16 @@ classDiagram
         +action : String
         +status : String
         +reason : String
+        +backupPath : Optional
     }
     class StateFile
     class ManagedOutputRecord {
         +outputName : String
         +targetPath : String
+        +parentIdentity : PersistentId
         +observedBaseline : ComparisonMetadata
         +desiredBaseline : ComparisonMetadata
+        +forgetPending : Boolean
     }
     class OutputDefinition
     ApplyPlan "1" *-- "0..*" PlanItem : 包含
@@ -184,37 +214,51 @@ classDiagram
     PlanItem ..> ManagedOutputRecord : 比較既有紀錄
 ```
 
-`action` 為建立／更新／刪除／不變；`disposition` 表示將執行、略過或接受等處理決策；正常結束的 `status` 是完成或保留。執行錯誤與回復失敗另外記在回報，避免把已回復項目誤報為已完成。
+`action` 為建立、更新、刪除或不變；`disposition` 表示執行、接管、接受、覆寫或保留等處理決策。兩者分開表示，例如接受 drift 時，可以不改動目標內容，但仍更新管理紀錄。
 
-兩份 baseline 是本文件的設計提案：observedBaseline 用於偵測目標後續的外部修改，desiredBaseline 用於判斷來源產生的期望內容是否改變。它們只存比較用中繼資料，不存輸出原文，也不在此指定演算法。這個分工支援「接受 drift 後，來源未改時不立刻覆寫；來源改變後依一般更新處理」。執行期產生內容不得序列化進狀態檔。
+`desiredContent` 保存本次渲染或讀取的期望內容及比較資訊，供 Executor 執行；清除項目可沒有期望內容。`observation` 保存規劃時的目標與父路徑觀測資料，執行時必須重新核對，不能因為預檢通過就假設目標沒有被外部程式修改。執行期的輸出原文不得序列化進狀態檔。
 
-ComparisonMetadata 是值型別，記錄內容指紋及需追蹤的宣告屬性；不是檔案原文。權限未宣告及 Windows 權限位元不得納入 drift 判斷。接受時 observedBaseline 記錄目前實際內容、desiredBaseline 記錄本次來源產生的內容；兩者可以不同。目標內容已符合期望時，不重寫內容；若仍有已宣告且適用於目前平台的權限變更，仍須完成該變更，才能將項目記為完成。必要時更新狀態紀錄。
+兩份 baseline 的責任已由詳細設計具體化：observedBaseline 用於偵測目標後續的外部修改，desiredBaseline 用於判斷來源產生的期望內容是否改變。它們只存比較用中繼資料，不存輸出原文。這個分工支援「接受 drift 後，來源未改時不立刻覆寫；來源改變且目標未再被外部修改時，依一般更新處理」。
+
+ComparisonMetadata 是值型別，記錄內容指紋及適用的宣告權限，不是檔案原文。未宣告的權限及 Windows 的 POSIX 權限位元不得納入 drift 判斷。接受時 observedBaseline 記錄目前實際內容的比較資訊，desiredBaseline 記錄本次來源產生的期望內容比較資訊，兩者可以不同。
+
+目標內容已符合期望時，不重寫內容；若仍有已宣告且適用於目前平台的權限變更，仍須完成該變更，才能將項目記為完成。必要時更新狀態紀錄。
+
+狀態紀錄除了目標路徑，也保存父目錄身分。相同路徑字串或相同內容，不足以證明仍是原受管理的位置；位置核對及無法確認時的處理依詳細設計。`forgetPending` 表示停止管理尚未完成，套用時保留相關目標並提示使用者重新執行停止管理，避免中途停止後誤將它清除或接管。
+
+正常結束的逐項狀態為完成或保留；發生執行錯誤時，另區分失敗、已回復、未能回復及尚未執行。已回復的項目不得仍列為完成，原始執行錯誤與回復失敗須分別回報。
 
 ### C3 成員說明
 
 | 類別／成員 | 型別 | 用途 |
 | --- | --- | --- |
-| ApplyPlan | 包含 `PlanItem` 的容器 | 保存本次套用的完整計畫；圖中以組合關係表示。 |
-| PlanItem.targetPath | `String` | 本項目解析後的目標路徑。 |
-| PlanItem.action | `String` | 建立、更新、刪除或不變。 |
-| PlanItem.disposition | `String` | 本次處理決策，例如執行、略過或接受；與目標動作分開。 |
-| PlanItem.reason | `String` | 處理決策的原因；保留項目必須說明原因。 |
-| ApplyReport.exitCode | `Integer` | 套用的回傳碼：0、2 或 1，依 SRS 的結果規則計算。 |
-| ApplyReport.errors | `ExecutionError[]` | 原始執行錯誤的項目、目標路徑與原因。 |
-| ApplyReport.rollbackFailures | `RecoveryFailure[]` | 整批回復時，所有未能恢復的目標路徑與原因。 |
-| ItemResult.targetPath | `String` | 回報項目的目標路徑。 |
-| ItemResult.action | `String` | 該項目的建立、更新、刪除或不變動作。 |
-| ItemResult.status | `String` | 正常結束時為完成或保留；執行錯誤與整批回復另外說明。 |
-| ItemResult.reason | `String` | 保留原因；完成項目可使用空字串。 |
-| StateFile | 包含 `ManagedOutputRecord` 的容器 | 保存受管理輸出的紀錄，不保存輸出原文。 |
-| ManagedOutputRecord.outputName | `String` | 受管理輸出的識別名稱。 |
-| ManagedOutputRecord.targetPath | `String` | 已記錄的實際目標路徑，供 drift 判斷與舊輸出清除。 |
-| ManagedOutputRecord.observedBaseline | `ComparisonMetadata` | 上次記錄的實際目標比較資訊，用於偵測後續外部修改。 |
-| ManagedOutputRecord.desiredBaseline | `ComparisonMetadata` | 上次處理時的期望內容比較資訊，用於判斷來源是否改變。 |
+| ApplyPlan | 包含 PlanItem 的容器 | 保存本次套用的完整計畫；圖中以組合關係表示。 |
+| PlanItem.targetPath | String | 本項目解析後的目標路徑。 |
+| PlanItem.action | String | 建立、更新、刪除或不變。 |
+| PlanItem.disposition | String | 本次處理決策，例如執行、接管、接受、覆寫或保留；與目標動作分開。 |
+| PlanItem.reason | String | 處理決策的原因；保留項目必須說明原因。 |
+| PlanItem.desiredContent | `Optional<DesiredContent>` | 本次期望內容及比較資訊；清除項目可沒有期望內容，輸出原文不寫入狀態檔。 |
+| PlanItem.observation | Observation | 規劃時取得的目標與父路徑觀測資料，供執行時核對。 |
+| ApplyReport.exitCode | Integer | 概念上的套用回傳碼：0、2 或 1，依 SRS 的結果規則計算；詳細設計由 outcome 對應 exit code。 |
+| ApplyReport.errors | ExecutionError[] | 原始執行錯誤的項目、目標路徑與原因；此處以集合概括，實際錯誤結構以詳細設計為準。 |
+| ApplyReport.rollbackFailures | RecoveryFailure[] | 整批回復時，所有未能恢復的目標路徑與原因。 |
+| ItemResult.targetPath | String | 回報項目的目標路徑。 |
+| ItemResult.action | String | 該項目的建立、更新、刪除或不變動作。 |
+| ItemResult.status | String | 完成、保留、失敗、已回復、未能回復或尚未執行；不得把已回復項目列為完成。 |
+| ItemResult.reason | String | 保留原因；完成項目可使用空字串。執行錯誤與回復失敗的原因另由批次回報提供。 |
+| ItemResult.backupPath | `Optional<String>` | 接管時產生的備份位置；沒有備份時為空。 |
+| StateFile | 包含 ManagedOutputRecord 的容器 | 保存受管理輸出的紀錄，不保存輸出原文。 |
+| ManagedOutputRecord.outputName | String | 受管理輸出的識別名稱。 |
+| ManagedOutputRecord.targetPath | String | 已記錄的實際目標路徑，供 drift 判斷與舊輸出清除。 |
+| ManagedOutputRecord.parentIdentity | PersistentId | 父目錄的持久身分資訊，協助核對原受管理的位置。 |
+| ManagedOutputRecord.observedBaseline | ComparisonMetadata | 上次記錄的實際目標比較資訊，用於偵測後續外部修改。 |
+| ManagedOutputRecord.desiredBaseline | ComparisonMetadata | 上次處理時的期望內容比較資訊，用於判斷來源是否改變。 |
+| ManagedOutputRecord.forgetPending | Boolean | 停止管理尚未完成的標記；套用時保留相關目標，提示使用者重新執行停止管理。 |
 
-`ExecutionError`、`RecoveryFailure` 是錯誤描述資料；`ComparisonMetadata` 是不含輸出原文的比較資料，其具體結構於詳細設計時決定。
+`DesiredContent` 為執行期的期望內容與比較資訊；`Observation` 為檔案系統觀測資料；`PersistentId` 為位置身分資訊。`ExecutionError`、`RecoveryFailure` 是錯誤描述資料，`ComparisonMetadata` 是不含輸出原文的比較資料。具體結構以詳細設計為準。
 
-`ApplyReport` 透過組合關係包含逐項的 `ItemResult`。C3 未宣告成員方法，因此沒有方法參數需要補充；計畫產生、執行及狀態儲存由 C4 的服務負責。
+ApplyReport 透過組合關係包含逐項的 ItemResult。C3 未宣告成員方法；計畫產生、執行及狀態儲存由 C4 的服務負責。
+
 
 ## 4. 類別圖 C4：服務責任
 
@@ -227,7 +271,8 @@ classDiagram
         +run(args) Integer
     }
     class ApplyService {
-        +run(request) ApplyReport
+        +preview(request) ApplyPlan
+        +apply(request) ApplyReport
     }
     class ConfigLoader {
         +load() EffectiveConfig
@@ -261,7 +306,7 @@ classDiagram
         +initialize(request)
     }
     class GitClient {
-        +cloneToStaging(url)
+        +clone_into(url, heldDir)
     }
     class ManifestService {
         +add(path)
@@ -305,12 +350,13 @@ StateLoadResult 區分成功、檔案不存在及無法讀取／損毀。不存�
 
 ### C4 方法與參數說明
 
-本圖只列方法，未列服務內部屬性。方法簽名以正常結果為摘要；執行失敗時須回傳或傳遞錯誤，具體錯誤表示方式於詳細設計時決定。
+本圖只列方法，未列服務內部屬性。方法簽名以正常結果為概念摘要，省略鎖定、診斷等參數；執行失敗時須回報錯誤。實際簽名與錯誤表示方式以詳細設計為準。
 
 | 類別／方法 | 參數 | 回傳與用途 |
 | --- | --- | --- |
 | CLI.run(args) | `args: String[]`，命令列參數 | 回傳 `Integer` exit code；解析子指令與選項，呼叫對應服務並顯示結果。 |
-| ApplyService.run(request) | `request: ApplyRequest`，包含預覽／套用、模式及衝突處理選項 | 回傳 `ApplyReport`；協調設定載入、值解析、計畫、預檢與執行。預覽不得寫入目標或狀態檔。 |
+| ApplyService.preview(request) | `request: ApplyRequest`，包含預覽與衝突處理選項 | 回傳 `ApplyPlan`；協調設定載入、值解析、預檢與規劃，不寫入目標或狀態檔。 |
+| ApplyService.apply(request) | `request: ApplyRequest`，包含套用模式及衝突處理選項 | 回傳 `ApplyReport`；在持有寫入鎖後重新分析與產生計畫，不重用先前預覽的計畫；整批預檢與模式檢查通過後才交由 Executor 執行。 |
 | ConfigLoader.load() | 無顯式參數；來源位置由初始化紀錄及執行環境取得 | 成功時回傳 `EffectiveConfig`；載入來源設定與內建資源，合併輸出覆寫並保留診斷來源位置。 |
 | Planner.build(config, values, state) | `config: EffectiveConfig`；`values: ResolvedValues`；`state: StateFile` | 回傳 `ApplyPlan`；計算期望內容、建立／更新／刪除／不變動作、衝突與清除項目，不寫入目標或狀態檔。 |
 | PreflightChecker.validate(context, optionalPlan) | `context: AnalysisContext`，包含可取得的設定、主機資訊及診斷；`optionalPlan: Optional<ApplyPlan>` | 回傳 `Diagnostics`；檢查寫入前的阻擋問題。無法建立完整計畫時，仍可檢查不依賴計畫的部分。 |
@@ -325,15 +371,16 @@ StateLoadResult 區分成功、檔案不存在及無法讀取／損毀。不存�
 | FileSystem.backup(path) | `path: String`，待接管的既有檔案 | 成功時回傳備份位置 `String`；在覆寫前保存原檔，失敗時不得繼續接管。 |
 | FileSystem.applyAtomically(item) | `item: PlanItem`，已具備執行所需內容與屬性的項目 | 執行目標建立、更新、刪除或適用的宣告權限變更；內容寫入須保有完整舊／新內容，不重寫不變項目的內容。 |
 | InitializationService.initialize(request) | `request: InitializationRequest`，包含遠端來源、具名本機值及適用的初始化選項 | 回傳 `InitializationResult`；準備來源、建立或合併本機設定、記錄來源位置，並依選項執行首次套用。 |
-| GitClient.cloneToStaging(url) | `url: String`，使用者指定的遠端 repo 位址 | 成功時回傳暫存來源目錄位置 `String`；失敗時清理本次暫存並回報原因。不負責後續 pull、push 或合併。 |
+| GitClient.clone_into(url, heldDir) | `url: String`；`heldDir: HeldDir`，由初始化服務經 FileSystem 建立並持有的空暫存目錄 | 僅執行 git，不自行配置或清理暫存目錄；初始化服務負責 clone 後核對、移入及失敗處理（詳細設計 §4.16）。 |
 | ManifestService.add(path) | `path: String`，home 內既有檔案路徑 | 回傳 `OperationResult`；複製檔案到來源目錄並新增原樣複製輸出，不刪除原目標檔。 |
 | ManifestService.update(name, properties) | `name: String`，輸出名稱；`properties: OutputPropertyPatch`，指定要修改的屬性 | 回傳 `OperationResult`；只更新指定屬性，保留其他內容、註解及格式。 |
 | ManifestService.forget(name) | `name: String`，輸出名稱 | 回傳 `OperationResult`；移除輸出宣告及其狀態紀錄，不刪除或修改目標檔。 |
-| QueryService.findOutputs(moduleOrField) | `moduleOrField: ModuleRef 或 FieldRef` | 回傳 `OutputSummary[]`，列出引用該模組或欄位的輸出；模組查詢為 essential，欄位查詢為 conditional。 |
+| QueryService.findOutputs(moduleOrField) | `moduleOrField: ModuleRef 或 FieldRef` | 回傳 `OutputSummary[]`，列出引用該模組或欄位的輸出；模組與欄位查詢均納入第一版。 |
 | QueryService.describeOutput(nameOrPath) | `nameOrPath: String`，輸出名稱或目標路徑 | 回傳 `OutputDescription`，列出範本或複製來源，以及透過範本追溯的模組與欄位。 |
 | QueryService.describeValue(field) | `field: FieldRef`，模組與欄位的識別 | 回傳 `ResolvedValueDescription`，包含最終值、來源層級及來源檔案。 |
 
 ValueResolver 的方法與參數已於 C2 說明；此圖只參照該類別，不重複列出。
+
 
 ### C4 資料型別說明
 
@@ -342,7 +389,7 @@ ValueResolver 的方法與參數已於 C2 說明；此圖只參照該類別，�
 | 型別 | 說明 |
 | --- | --- |
 | EffectiveConfig | 合併後的有效設定，包含輸出宣告、模組、範本與 Profile。 |
-| ApplyRequest | 本次預覽或套用的選項；不表示所有 conditional 功能都已決定交付。 |
+| ApplyRequest | 本次預覽或套用的選項；只包含第一版交付範圍，不提供延後的互動詢問。 |
 | AnalysisContext | 可取得的設定、解析值、主機資訊、狀態載入結果及累積診斷。 |
 | Diagnostics | 檢查問題集合，提供來源位置、原因與可用的修正提示。 |
 | StateLoadResult | 狀態載入結果，區分成功、不存在與阻擋錯誤。 |
@@ -379,7 +426,9 @@ sequenceDiagram
         A->>V: resolve(config, host, localSettings)
         V-->>A: 最終值與來源，或同層衝突診斷
     end
-    opt 值可解析、狀態可用且具備產生計畫的資料
+    A->>K: 檢查欄位、範本輸入與靜態引用
+    K-->>A: 可供渲染的值或診斷
+    opt 輸入檢查通過、狀態可用且具備產生計畫的資料
         A->>P: build(config, values, state)
         P-->>A: 計畫或診斷
     end
@@ -400,13 +449,13 @@ sequenceDiagram
     end
 ```
 
-此圖的呼叫表示概念順序；錯誤資料不能傳入不適用的後續步驟。實作應在可繼續分析時收集所有可辨識問題，而非遇到第一項就停止診斷。計畫產生可先驗證渲染必要的欄位，再計算內容；所有阻擋檢查必須在任何輸出寫入前完成。
+此圖的呼叫表示概念順序；錯誤資料不能傳入不適用的後續步驟。實作應在可繼續分析時收集所有可辨識問題，而非遇到第一項就停止診斷。必須先檢查欄位及範本輸入，再渲染與產生計畫；所有阻擋檢查必須在任何輸出寫入前完成。
 
-預覽不寫入目標與狀態檔，也不執行使用者定義的外部命令。預檢清單包括 manifest 語法與未知屬性、重複輸出名、平台目標缺失、home 範圍、欄位型別／範圍／必填、同層衝突，以及正規化後的目標碰撞（包含不區分大小寫的檔案系統）。若交付版本相容功能，亦檢查版本。不存在的狀態檔視為空紀錄，不產生舊檔清除計畫；損毀則預檢失敗。依賴檢查的缺少／無法確認只是非阻擋回報。
+預覽不寫入目標與狀態檔，也不執行使用者定義的外部命令。預檢清單包括 manifest 語法與未知屬性、重複輸出名、平台目標缺失、home 範圍、欄位型別／範圍／必填、同層衝突，以及正規化後的目標碰撞（包含不區分大小寫的檔案系統）。第一版亦檢查模組格式版本相容性。不存在的狀態檔視為空紀錄，不產生舊檔清除計畫；損毀則預檢失敗。依賴檢查不在第一版範圍。套用在持有寫入鎖後重新分析與產生計畫，不重用先前預覽的計畫；鎖只協調 rosamta 寫入者，仍須防範外部程式修改。
 
 ## 6. 循序圖 S2：未受管理檔案的接管
 
-前提：完整計畫已通過預檢與嚴格模式檢查；此項目目標存在，但狀態檔沒有紀錄。此圖聚焦完整管理輸出，其他擁有程度另依其規則處理。
+前提：完整計畫已通過預檢與嚴格模式檢查；此項目目標存在，但狀態檔沒有紀錄。此圖聚焦完整管理輸出，其他擁有程度另依其規則處理。符號連結不得因指向內容相同就直接納管；接管時備份並替換連結本身，不觸及其指向的檔案。不支援的來源或需操作類型由預檢阻擋；未授權接管的非一般檔案只檢查類型並保留，不開檔讀取。
 
 ```mermaid
 sequenceDiagram
@@ -415,7 +464,7 @@ sequenceDiagram
     participant R as recovery:RecoveryManager
     E->>F: inspect(path)
     F-->>E: 目前內容與屬性
-    alt 目前內容與期望內容相同
+    alt 目標為一般檔案且目前內容與期望內容相同
         E->>E: 不備份，暫存納管紀錄
         Note over E,F: 必要的宣告權限仍依平台規則處理
     else 已宣告接管
@@ -438,80 +487,52 @@ sequenceDiagram
     Note over E,R: 任一執行錯誤交由 S5 整批回復；狀態於批次成功時提交
 ```
 
-互動接管屬 conditional；若納入，須在決策階段取得使用者選擇，且只有明確啟用互動並且 stdin 為終端機時才詢問。接管備份與回復快照用途不同，不應混為同一個生命週期。
+互動接管（FR-MAN-022）延後；第一版依設定清單中的明確接管宣告處理，不詢問使用者。接管備份與回復快照用途不同，不應混為同一個生命週期。
 
 相同內容直接納管的檔案沒有特殊清除豁免：後續停用或移除時仍依 S4 清除（SRS 1.1 的 FR-MAN-021）。任何權限變更也須先 capture，並納入 S5 的回復範圍。capture／backup 失敗時不得繼續寫入；先回報執行錯誤並進入 S5，不能只靠圖外說明而無條件執行下一步。
 
 ## 7. 循序圖 S3：受管理輸出的 drift 決策
 
-本圖是計畫階段的分析，不直接寫入。以完整管理輸出為範圍；未宣告的權限不列為 drift。互動詢問為 conditional 功能，僅在明確啟用互動且 stdin 連接終端機時進行。
+本圖是計畫階段的分析，不直接寫入。以完整管理輸出為範圍；未宣告的權限及 Windows 的 POSIX 權限位元不列為 drift。第一版不提供互動詢問。
 
 ```mermaid
 sequenceDiagram
-    actor U as 使用者
-    participant C as cli:CLI
     participant A as app:ApplyService
     participant P as planner:Planner
     participant F as fs:FileSystem
-    participant S as state:StateStore
-
-    A->>P: 分析受管理輸出
-    P->>S: load() 取得比較紀錄
-    S-->>P: observedBaseline 與 desiredBaseline
+    A->>P: 分析輸出，傳入已載入的比較紀錄
     P->>F: inspect(path)
-    F-->>P: 目前內容與屬性
-    P->>P: 比較目前、期望與 baseline
-    P-->>A: 分析結果
-
+    F-->>P: 目前內容與適用屬性
+    P->>P: 比較目前、期望與 observed、desired baseline
     alt 目前內容等於本次期望內容
-        A->>P: 計畫更新比較紀錄，不重寫內容
+        P->>P: 不重寫內容，仍處理適用的宣告權限與紀錄
     else 沒有外部修改且期望未變
-        A->>P: 計畫不變
+        P->>P: 計畫不變
     else 沒有外部修改且期望已變
-        A->>P: 計畫一般更新
+        P->>P: 計畫一般更新
     else 有 drift 衝突
         alt 嚴格模式
-            A->>A: 記錄衝突輸出名稱與目標路徑，標記整批不可套用
-        else 非嚴格模式
-            alt 已明確指定處理方式
-                A->>A: 使用指定的接受、覆寫或略過
-            else 明確啟用互動且 stdin 為終端機
-                A->>C: 顯示衝突並請求選擇
-                C->>U: 選擇覆寫、接受或略過
-                alt 使用者提供有效選擇
-                    U-->>C: 處理選擇
-                    C-->>A: 回傳選擇
-                else 未選擇或輸入結束
-                    C-->>A: 略過，不重複詢問
-                end
-            else 不符合互動條件
-                A->>A: 使用預設略過
-            end
-
-            alt 處理方式為接受
-                A->>P: 目標不變，計畫更新兩份 baseline
-            else 處理方式為覆寫
-                A->>P: 計畫寫入本次期望內容
-            else 處理方式為略過
-                A->>P: 保留目標與原狀態紀錄
-            end
+            P->>P: 記錄名稱與目標路徑，整批不得套用
+        else 非嚴格模式且明確指定接受
+            P->>P: 保留目標，更新 observed 與 desired baseline
+        else 非嚴格模式且明確指定覆寫
+            P->>P: 計畫寫入本次期望內容
+        else 指定略過或未指定處理方式
+            P->>P: 保留目標與原紀錄，記錄原因
         end
     end
+    P-->>A: 決策與診斷，尚未寫入
 ```
 
-本圖描述單一輸出；有多個衝突時逐檔處理。嚴格模式一旦發現任何 drift 衝突，本次套用不得寫入任何輸出或狀態檔。
+嚴格模式優先：即使同時指定接受或覆寫，只要有 drift 衝突，就不寫入任何輸出與狀態檔。這是已確認的規則，不再列為設計提案。
 
-接受不修改來源目錄，執行成功時記為完成。接受時 observedBaseline 記錄目前實際內容的比較資訊，desiredBaseline 記錄本次期望內容的比較資訊，不保存輸出原文。
+接受不修改來源目錄；執行成功時記為完成。observedBaseline 記錄目前實際內容，desiredBaseline 記錄本次期望內容的比較資訊，不保存輸出原文。接受後若來源改變而目標未再被外部修改，依一般更新處理（第一版納入 FR-DRF-008）。FR-DRF-010、011 的互動流程延後。
 
-先前接受後，若來源改變但目標未再被外部修改，依一般更新處理；此分支對應 conditional 的 FR-DRF-008。互動詢問與無選擇時略過，分別對應 conditional 的 FR-DRF-010、011。
-
-圖中的「分析輸出」及「更新計畫」是責任描述，實際方法簽名於詳細設計時補充。所有計畫變更都不代表立即寫入，實際套用仍須通過整批檢查。
-
-本稿暫以「嚴格模式優先、已指定的處理方式優先於互動詢問」作為設計提案，須由組員確認，並非 SRS 已明定的組合選項規則。
+所有分支只產生計畫；實際操作仍須通過整批預檢、重新核對及 S5 的執行流程。
 
 ## 8. 循序圖 S4：清除舊輸出
 
-此圖只產生清除計畫。舊目標是已移除、已停用或已改路徑的受管理輸出；只比較狀態檔有紀錄的路徑。
+此圖只產生清除計畫。舊目標是已移除、已停用或已改路徑的受管理輸出；只比較狀態檔有紀錄的路徑。先依正規化的位置鍵與目前啟用輸出配對；同一位置由新名稱接續管理時，遷移紀錄而不產生舊檔刪除計畫，drift 仍依 S3 處理，保留時維持原名稱紀錄（詳細設計 §12.4）。
 
 ```mermaid
 sequenceDiagram
@@ -519,11 +540,13 @@ sequenceDiagram
     participant P as planner:Planner
     participant F as fs:FileSystem
     A->>P: build(config, values, state)
-    loop 每個受管理的舊目標
+    loop 每個未由目前啟用輸出接續管理的舊目標
         P->>F: inspect(oldPath)
         F-->>P: 存在與否、內容是否修改
         alt 檔案不存在
             P->>P: 加入移除紀錄項目
+        else 目標被換成連結、其他非一般檔案或無法確認原位置
+            P->>P: 保留目標與原紀錄，回報原因
         else 內容未修改
             P->>P: 加入刪除項目
         else 已修改且同意刪除
@@ -535,11 +558,11 @@ sequenceDiagram
     P-->>A: 含清除項目的完整計畫
 ```
 
-檢查通過後依 S5 執行，Executor 不參與本圖的計畫階段。刪除時同步移除紀錄；保留時檔案與原紀錄都不變；檔案已不存在則只移除紀錄並記完成。明確刪除已修改舊檔為 conditional。手動從 manifest 移除、停用、改目標路徑，都可能產生清除項目；「停止管理」指令則移除狀態紀錄並保留檔案，後續不清除它。
+檢查通過後依 S5 執行，Executor 不參與本圖的計畫階段。刪除時同步移除紀錄；保留時檔案與原紀錄都不變；檔案已不存在則只移除紀錄並記完成。第一版納入明確刪除已修改舊檔（FR-DRF-014）；未指定時保留，不提供互動詢問（FR-DRF-017 延後）。手動從 manifest 移除、停用、改目標路徑，都可能產生清除項目；「停止管理」指令則移除狀態紀錄並保留檔案，後續不清除它。
 
 ## 9. 循序圖 S5：執行與整批回復
 
-前提：預檢通過、嚴格模式沒有阻擋，並已完成所有項目的處理決策。RecoveryManager 的快照保存方式是設計提案，不得把輸出內容寫入狀態檔。
+前提：預檢通過、嚴格模式沒有阻擋，並已完成所有項目的處理決策。套用持有寫入鎖，快照採詳細設計的副本方式，不以輸出硬連結充當快照；不得把輸出內容寫入狀態檔。圖中的 applyAtomically 是概念摘要，實作須依詳細設計 §4.10、§6.3 的 prepare → execute → confirm 契約逐步核對。
 
 ```mermaid
 sequenceDiagram
@@ -574,10 +597,14 @@ sequenceDiagram
     opt 之前沒有執行錯誤且狀態需要更新
         E->>S: saveAtomically(newState)
         S-->>E: 成功或錯誤
+        opt 提交成功
+            E->>F: 完成確認，檢查提交期間的外部變更
+            F-->>E: 成功或錯誤
+        end
     end
-    alt 發生執行錯誤（含狀態提交錯誤）
+    alt 發生執行錯誤（含狀態提交或完成確認錯誤）
         E->>R: rollback()
-        R->>F: 恢復本批變更目標的內容、權限與存在與否
+        R->>F: 逐項核對後回復，保留無法安全覆寫的外部修改
         R->>S: 恢復原狀態檔
         R-->>E: 回復結果及所有未能恢復的路徑與原因
         E-->>A: 原始錯誤、回復結果，exit code = 1
@@ -589,13 +616,13 @@ sequenceDiagram
 
 begin、capture、backup、目標操作與狀態提交的錯誤都必須走失敗處理；回復需盡力處理所有受影響項目，不能在第一個回復錯誤時就遺漏其他項目。不可因 drift 或未宣告接管而觸發回復。此模型沒有承諾多檔案同時原子可見，也沒有自行增加斷電後自動復原的需求。
 
-applyAtomically 對內容寫入先準備完整暫存檔再以平台支援的原子替換提交，保證程序中止時單一輸出只有完整舊內容或完整新內容（REL-001）；替換既有檔時須維持未宣告的權限。狀態檔同樣原子寫入（REL-002）。commit 只表示釋放回復資訊，不能另作未受保護的目標變更；快照清理失敗不得誤報輸出已回復。begin 失敗時不操作輸出，僅清理已建立的本次暫存資源；rollback 不可使用未成功保存的快照覆寫原狀態。
+applyAtomically 對內容寫入先準備完整暫存檔再以平台支援的原子替換提交，保證程序中止時單一輸出只有完整舊內容或完整新內容（REL-001）；替換既有檔時須維持未宣告的權限。狀態檔同樣原子寫入（REL-002）。commit 只表示釋放回復資訊，不能另作未受保護的目標變更；快照清理失敗不得誤報輸出已回復。begin 失敗時不操作輸出，僅清理已建立的本次暫存資源；rollback 不可使用未成功保存的快照覆寫原狀態。外部修改可能使回復無法安全完成，此時保留相關內容並逐項回報，不可聲明全部恢復。狀態提交後若完成確認發現變更，也須走回復並恢復原狀態檔；不宣稱所有競爭都能在提交前發現。
 
 exit code：全完成或空計畫為 0；完成與保留並存為 2；只有保留為 1。依 SRS 1.1，嚴格模式下若沒有 drift 衝突，但有「未宣告接管」的保留項目，仍依此計算，可為 2；不可把嚴格模式一律視為全有或全無。回復完全成功才聲明所有目標已恢復；否則逐項列出失敗路徑與原因，均為 1。
 
 ## 10. 循序圖 S6：新機器初始化
 
-此圖聚焦新機器路徑；既有本機設定的合併另依 FR-INI-008，未明確指定的值及文件格式必須保留。
+對應詳細設計 §4.16；已取得寫入鎖並完成暫存清理規則的檢查。既有本機設定只合併本次明確指定的值，保留其他值、註解與格式；標籤採加入而非整批取代。
 
 ```mermaid
 sequenceDiagram
@@ -604,36 +631,61 @@ sequenceDiagram
     participant G as git:GitClient
     participant F as fs:FileSystem
     participant A as app:ApplyService
-    U->>I: initialize(repo, namedValues)
-    I->>F: 檢查來源位置與既有本機設定
-    alt 指定遠端且來源位置已有檔案
-        I-->>U: 不修改既有資料，exit code = 1
-    else 未指定遠端 repo，或來源位置沒有既有檔案
-        alt 指定遠端 repo
-            I->>G: cloneToStaging(repo)
-            G-->>I: 成功或失敗
-        else 未指定遠端 repo
-            I->>I: 準備空來源目錄與空 manifest
+    U->>I: initialize(request)
+    I->>F: 讀取本機設定，驗證目錄位置及連結限制
+    break 位置驗證失敗
+        I-->>U: 回報錯誤，不繼續初始化
+    end
+    alt 指定遠端 repo
+        I->>F: 檢查來源不存在，且無同名規則的暫存殘留
+        break 來源存在（包括空目錄）或暫存殘留存在
+            I-->>U: 回報位置，不修改或自動刪除既有資料
         end
-        alt 取得來源失敗
-            I->>F: 清理本次暫存來源（若有）
-            I-->>U: repo 位址與原因，不建立來源及本機設定，不寫輸出
-        else 來源準備成功
-            I->>F: 來源不存在時才建立，保留既有來源並記錄位置
-            I->>F: 以指定的標籤與欄位值建立或合併本機設定
-            alt 指定只初始化（conditional）
-                I-->>U: 初始化完成，不寫目標與狀態檔
-            else 執行第一次套用
-                I->>A: run(applyRequest)
-                A-->>I: 一般套用結果
-                I-->>U: 回報與一般套用相同的 exit code
+        I->>F: 建立並持有空暫存目錄
+        F-->>I: HeldDir
+        I->>G: clone_into(repo, HeldDir)
+        G-->>I: git 成功或失敗
+        I->>F: 不論 git 成敗，先 recheck 暫存目錄
+        F-->>I: 核對結果
+        break 核對失敗
+            I-->>U: init.stale，保留資料，警告可能位於 home 外
+        end
+        break git 失敗且核對通過
+            I->>F: 依清單及身分核對清理本次暫存
+            I-->>U: repo 位址與原因，不建立本機設定
+        end
+        I->>F: 記錄來源清單，以受保護操作移入正式位置
+        break 移入失敗
+            I-->>U: 回報錯誤與保留位置，依詳細設計安全清理
+        end
+    else 未指定遠端 repo
+        I->>F: 來源及 manifest 不存在時才建立，保留既有內容
+    end
+    I->>F: 只合併指定值並安全寫入 local.toml
+    F-->>I: 成功或錯誤
+    break 本機設定寫入失敗
+        opt 本次已取得遠端來源
+            I->>F: 先移開來源，核對與取得時的清單
+            alt 清單相同且可安全刪除
+                I->>F: 依清單及身分核對撤回來源
+            else 外部新增、修改或核對失敗
+                I->>F: 保留內容，盡可能移回正式位置
             end
         end
+        I-->>U: 回報錯誤及任何保留位置，不執行首次套用
+    end
+    alt 指定遠端且要求首次套用
+        I->>A: apply(lock, request)
+        A-->>I: 一般套用結果
+        I-->>U: 套用回報；失敗不撤銷已完成初始化
+    else 未指定遠端或只初始化
+        I-->>U: 初始化完成，不套用輸出
     end
 ```
 
-clone 的暫存與成功後移入是為滿足取得失敗時不得留下來源目錄的設計建議。
-此圖不宣稱首次套用失敗時會撤銷整個初始化；SRS 只明定輸出與狀態的回復。
+每一步操作失敗即停止正常流程，依詳細設計回報與處理；圖中的清理不代表可以無條件遞迴刪除。遠端 clone 失敗後也必須先核對，再決定是否清理；不能因 git 失敗就直接刪除暫存目錄。來源已移入而本機設定寫入失敗時，撤回遠端來源需保護外部新增或修改的檔案；不能把此情況與「初始化完成後首次套用失敗」混為一談。
+
+**DC-002 的適用限制**：Linux／macOS 在 clone 前後的目錄搬移或替換可能讓 git 寫入 home 外；路徑在 recheck 時仍改變才會被發現，若先被還原則無法發現。其他受保護操作也存在詳細設計所列的檢查空窗，不宣稱所有平台都絕不短暫寫出 home 或一定能移除外部殘留。Windows 依持有各層目錄的設計限制替換。撤回的時間與內容比較仍有平台差異及逐項刪除空窗，詳見 SRS §3.5、詳細設計 §4.16、§6.3、§12.3。
 
 ## 11. 需求追溯與審查重點
 
@@ -644,29 +696,32 @@ clone 的暫存與成功後移入是為滿足取得失敗時不得留下來源�
 | C3 | FR-APL-001–009、FR-DRF-001–008、SEC-001 | 計畫與結果分開；狀態不存原文；接受不立即被覆寫 |
 | C4 | FR-MAN-023–030、FR-QRY-001–006 及主要套用需求 | 各服務責任；修改文件保留格式；查詢不遺漏引用 |
 | S1 | FR-PLN-001–010、FR-DRF-009、USE-004 | 整批預檢；預覽不寫入；嚴格模式不寫入 |
-| S2 | FR-MAN-018–022 | 相同內容直接納管；接管先備份；未接管保留 |
-| S3 | FR-DRF-001–011、B-17 | 三種處理、接受只更新狀態、嚴格模式 |
-| S4 | FR-DRF-012–017、FR-MAN-025 | 修改過的舊檔保留；停止管理與清除不同 |
+| S2 | FR-MAN-018–021；FR-MAN-022 延後 | 相同內容直接納管；接管先備份；未接管保留 |
+| S3 | FR-DRF-001–009、B-17；FR-DRF-010、011 延後 | 三種處理、接受只更新狀態、嚴格模式 |
+| S4 | FR-DRF-012–016、FR-MAN-025；FR-DRF-017 延後 | 修改過的舊檔保留；停止管理與清除不同 |
 | S5 | FR-APL-001–009、REL-001–002 | 寫入、刪除、權限與狀態皆可回復；正確 exit code |
-| S6 | FR-INI-001–011、IF-013 | clone 失敗不留來源；首次套用重用一般套用流程 |
+| S6 | FR-INI-001–006、008–011、IF-013、DC-002；FR-INI-007 延後 | 不指定遠端只初始化；clone 後先核對；安全清理與首次套用分開 |
 
 上表為關聯需求索引，不代表每張圖完整覆蓋整個編號區間。FR-TPL-002 已在 C1 補入必要元資料；REL-003／004 在 S1 區分狀態不存在與損毀；SRS 1.1 的 FR-APL-007 與 FR-MAN-021 由 S5 與 S2／S4 的補充規則明確約束。IF-001 的功能分期不由本 UML 提升：只有交付範圍內的功能才需實作對應子指令。
 
-本文件是核心 UML 集合，並非覆蓋全部 152 條需求。
-conditional 的依賴檢查若納入，應另設 DependencyChecker：預覽與套用均回報存在／缺少／無法確認，附受影響的輸出、模組、範本，但不阻擋寫入、不改變 exit code，且不安裝任何依賴。optional 的指定欄位管理亦需另補相應設計。
+本文件是核心 UML 集合，不宣稱完整覆蓋所有需求。SRS A.4 列出第一版 140 條需求與測試案例的對應；12 條延後需求以 A.3 為準，不能因本表引用一段編號而誤認全部交付。依賴檢查、指定欄位管理與互動分支不在第一版流程。
 
-## 12. 詳細設計前須定案
-第 1 項已確認；第 2～6 項保留為詳細設計議題，由負責設計者決定。
+## 12. 與詳細設計的對照及審查案例
 
-1. 已確認採嚴格模式優先：即使同時指定接受或覆寫，只要存在 drift 衝突，本次套用就不寫入任何輸出與狀態檔。回報須列出各衝突輸出的名稱與目標路徑，讓使用者能定位問題。
-2. 接管備份的目錄、唯一命名、保留期限，以及批次失敗後是否保留；回報必須提供可用的備份位置。
-3. 比較中繼資料的實際格式與演算法；兩份 baseline 提案應以「接受後重跑不變」「來源改後一般更新」「目標再改後偵測 drift」三組案例驗證。
-4. 如何處理預檢後檔案被外部程式修改，以及多個 rosamta 同時執行。不能只因先前預檢通過便假設目標未變。
-5. 路徑正規化、大小寫與指向 home 外的符號連結如何檢查，確保寫入範圍符合 SRS。
-6. 內建輸出停止管理後的持久化表示，避免下次合併內建宣告時重新出現。
+原先「詳細設計前須定案」的議題已有詳細設計，不再全部標為待定：
+
+| 議題 | 目前依據與需核對的案例 |
+| --- | --- |
+| 嚴格模式與 exit code | SRS 的 drift 規則與詳細設計套用流程；嚴格模式優先，但無 drift 而有未接管保留項目時，仍按逐項結果計算 exit code。 |
+| 接管備份與回復副本 | 詳細設計 §4.14、§5、§6；備份位置須回報，回復快照使用副本，兩者生命週期不同。 |
+| observed／desired baseline | 詳細設計狀態格式；核對接受後重跑不變、來源改變後一般更新、目標再改後偵測 drift。 |
+| 並行與外部修改 | 詳細設計 §4.10、§6.3；寫入鎖、操作前後核對、提交後完成確認，以及外部修改導致回復保留的情況。 |
+| 路徑安全 | SRS §3.5 DC-002 與詳細設計 §12.3；驗證三平台的路徑限制，也保留外部搬移與先改後還原的偵測限制。 |
+| 停止管理與同位置新輸出 | 詳細設計管理操作及 §12.4；停止管理保留檔案，內建宣告不得重新出現；新名稱接續同位置時遷移紀錄，不誤刪檔案。 |
+| 初始化失敗邊界 | 詳細設計 §4.16；來源存在（含空目錄）、暫存殘留、clone 失敗仍 recheck、設定寫入失敗安全撤回、首次套用失敗保留初始化。 |
 
 ## 13. 驗證狀態
 
-已對照附件 SRS 1.1 的核心規則與跨圖名稱，並以 Mermaid 11 實際解析及渲染全部 10 個圖塊，全部成功。
+本次為文件對齊：以 SRS 1.5、設計分析及詳細設計核對第一版範圍與主要流程。概念方法不代表已實作的 Rust API；實際介面以詳細設計 UML 為準。
 
-本次審查以 Royce 的初步設計及設計文件原則、Valente 的類別關係及物件訊息表示方式為準。兩份著作並未共同定義一種可機械檢查的「瀑布 UML 格式」，亦不能據此宣稱本文件通過正式認證。2024 年電子書未另行取得，Valente 依作者網路章節核對。
+Mermaid 圖的解析與渲染結果另列於本次修改說明；文件對照與圖形渲染都不能取代程式及跨平台測試，也不代表組員已正式核准本次變更。
