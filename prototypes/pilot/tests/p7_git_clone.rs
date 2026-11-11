@@ -27,12 +27,19 @@
 //! the clone lands there (ASM-06); the recheck after the clone must find
 //! that the path no longer leads to it. Windows must block every swap and
 //! still complete the clone.
+//!
+//! Withdrawing the source (05 §4.16 step 5) compares a listing taken after
+//! the clone with the tree before deleting it. `p7_change_time` checks the
+//! status-change time it relies on: a program that rewrites a file and puts
+//! the modification time back still changes it, and whether a program can
+//! set it back as well.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, SystemTime};
 
 use rosamta_pilot::bound::{Dir, Identity, Swap};
 use rosamta_pilot::platform::{ScratchDir, identity, report};
@@ -435,4 +442,107 @@ fn p7_held_mode() {
             run_case(Mode::Held, level, swap);
         }
     }
+}
+
+/// Same length as `CHANGED`, so the size does not reveal the edit.
+const BEFORE: &[u8] = b"before\n";
+const CHANGED: &[u8] = b"after!\n";
+
+/// The status-change time: `st_ctime` on Unix, `ChangeTime` on Windows.
+#[cfg(unix)]
+fn change_time(path: &Path) -> i128 {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::symlink_metadata(path).unwrap();
+    i128::from(meta.ctime()) * 1_000_000_000 + i128::from(meta.ctime_nsec())
+}
+
+#[cfg(windows)]
+fn basic_info(file: &fs::File) -> windows_sys::Win32::Storage::FileSystem::FILE_BASIC_INFO {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandleEx,
+    };
+    // SAFETY: FILE_BASIC_INFO is plain data; the buffer has the size passed in.
+    let mut info: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            (&mut info as *mut FILE_BASIC_INFO).cast(),
+            size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    };
+    assert!(ok != 0, "{}", std::io::Error::last_os_error());
+    info
+}
+
+#[cfg(windows)]
+fn change_time(path: &Path) -> i128 {
+    i128::from(basic_info(&fs::File::open(path).unwrap()).ChangeTime)
+}
+
+/// Tries to put the status-change time back; returns whether it stuck.
+#[cfg(unix)]
+fn set_change_time(_path: &Path, _to: i128) -> Option<bool> {
+    None // no system call sets st_ctime
+}
+
+#[cfg(windows)]
+fn set_change_time(path: &Path, to: i128) -> Option<bool> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FileBasicInfo, SetFileInformationByHandle,
+    };
+    let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+    let mut info = basic_info(&file);
+    info.ChangeTime = to as i64;
+    // SAFETY: info is a FILE_BASIC_INFO of the size passed in.
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            (&info as *const FILE_BASIC_INFO).cast(),
+            size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    };
+    drop(file);
+    Some(ok != 0 && change_time(path) == to)
+}
+
+#[test]
+fn p7_change_time() {
+    use std::io::Write;
+    let scratch = ScratchDir::new("p7-change-time").unwrap();
+    let path = scratch.path().join("file");
+    fs::write(&path, BEFORE).unwrap();
+    let modified: SystemTime = fs::metadata(&path).unwrap().modified().unwrap();
+    let changed = change_time(&path);
+
+    // Coarse timestamps must not hide the edit.
+    std::thread::sleep(Duration::from_millis(1100));
+    let mut file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.write_all(CHANGED).unwrap();
+    file.sync_all().unwrap();
+    file.set_modified(modified).unwrap();
+    drop(file);
+
+    let meta = fs::metadata(&path).unwrap();
+    let mtime_restored = meta.modified().unwrap() == modified;
+    let size_same = meta.len() == BEFORE.len() as u64;
+    let ctime_changed = change_time(&path) != changed;
+    let ctime_set_back = set_change_time(&path, changed);
+    report(
+        "P7-change-time",
+        &[
+            ("size_same", &size_same),
+            ("mtime_restored", &mtime_restored),
+            ("ctime_changed", &ctime_changed),
+            (
+                "ctime_set_back",
+                &ctime_set_back.map_or("unsupported".to_string(), |b| b.to_string()),
+            ),
+        ],
+    );
+    assert!(size_same && mtime_restored, "the edit was not disguised");
+    assert!(ctime_changed, "the status-change time did not change");
 }
