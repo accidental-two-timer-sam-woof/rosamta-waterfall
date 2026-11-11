@@ -9,6 +9,13 @@ use std::{io, process::ExitCode};
 use clap::{Parser, error::ErrorKind};
 
 fn main() -> ExitCode {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("error: rosamta internal error: {info}")
+    }));
+    std::panic::catch_unwind(main_command).unwrap_or(ExitCode::FAILURE)
+}
+
+fn main_command() -> ExitCode {
     let cli = match cli::Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => return print_parse_result(&error),

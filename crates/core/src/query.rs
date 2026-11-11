@@ -209,7 +209,18 @@ impl QueryService<'_> {
         match &output.source {
             Source::Copy(_) => Ok(References::default()),
             Source::Template(path) => {
-                Ok(Template::load(self.fs, &self.config.layout.source, path)?.references)
+                let template = Template::load(self.fs, &self.config.layout.source, path)?;
+                for module in &template.references.modules {
+                    if !self.resolved.versions.contains_key(module) {
+                        return Err(format!("{}: unknown module {module}", template.origin()));
+                    }
+                }
+                for field in &template.references.fields {
+                    if !self.resolved.fields.contains_key(field) {
+                        return Err(format!("{}: unknown field {field}", template.origin()));
+                    }
+                }
+                Ok(template.references)
             }
         }
     }

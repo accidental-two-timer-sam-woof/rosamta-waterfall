@@ -526,3 +526,34 @@ fn rollback_restores_a_taken_over_symbolic_link() {
     );
     assert!(!home.path().join(".local/state/rosamta/state.json").exists());
 }
+
+#[test]
+fn alacritty_template_generates_valid_toml_with_portable_keybindings() {
+    let home = temporary_home().unwrap();
+    let source = home.path().join(".local/share/rosamta");
+    fs::create_dir_all(source.join("modules")).unwrap();
+    fs::write(
+        source.join("manifest.toml"),
+        "[builtin.alacritty]\ntarget = \"~/alacritty.toml\"\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("profile.toml"),
+        "[[rules]]\nenable = [\"alacritty\"]\n",
+    )
+    .unwrap();
+    fs::write(source.join("modules/terminal.toml"), "[values.terminal]\nscrollback = 42\nkeybindings = { \"ctrl+shift+c\" = \"copy\", \"ctrl+t\" = \"new_tab\" }\n").unwrap();
+    successful(&home, &["apply"]);
+    let bytes = fs::read(home.path().join("alacritty.toml")).unwrap();
+    let config: Value = rosamta_core::config::parse("alacritty.toml", &bytes).unwrap();
+    let bindings = config["keyboard"]["bindings"].as_array().unwrap();
+    assert_eq!(
+        bindings[0],
+        json!({"key": "C", "mods": "Control|Shift", "action": "Copy"})
+    );
+    assert_eq!(
+        bindings.len(),
+        if cfg!(target_os = "macos") { 2 } else { 1 }
+    );
+    assert_eq!(config["scrolling"]["history"], 42);
+}

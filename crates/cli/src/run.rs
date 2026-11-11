@@ -45,6 +45,7 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
         Format::Text => {
             let print = result
                 .as_ref()
+                .filter(|(_, display)| !display.is_empty())
                 .map_or(Ok(()), |(_, display)| writeln!(stdout, "{display}"));
             print.and_then(|()| text::write(&mut stderr, &diagnostics))
         }

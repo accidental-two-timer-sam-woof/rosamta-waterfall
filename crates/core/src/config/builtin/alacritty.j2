@@ -33,10 +33,16 @@ shape = "{{ {"block":"Block","beam":"Beam","underline":"Underline"}[terminal.cur
 {% endif %}{% if terminal.scrollback is not none %}
 [scrolling]
 history = {{ terminal.scrollback }}
-{% endif %}{% if terminal.keybindings is not none %}{% set actions = {"copy":"Copy","paste":"Paste","new_tab":"CreateNewWindow","close_tab":"Quit","next_tab":"SelectNextTab","previous_tab":"SelectPreviousTab","increase_font_size":"IncreaseFontSize","decrease_font_size":"DecreaseFontSize","reset_font_size":"ResetFontSize"} %}
-{% for key, action in terminal.keybindings | items %}{% set parts = key | split("+") %}
+{% endif %}{% if terminal.keybindings is not none %}{% set actions = {"copy":"Copy","paste":"Paste","new_tab":"CreateNewTab","next_tab":"SelectNextTab","previous_tab":"SelectPreviousTab","increase_font_size":"IncreaseFontSize","decrease_font_size":"DecreaseFontSize","reset_font_size":"ResetFontSize"} %}
+{% set aliases = {"ctrl":"Control","control":"Control","shift":"Shift","alt":"Alt","option":"Option","super":"Super","cmd":"Command","command":"Command"} %}
+{% macro modifiers(parts) -%}
+{%- for mod in parts -%}{% if (mod | lower) in aliases %}{{ aliases[mod | lower] }}{% else %}{{ mod }}{% endif %}{% if not loop.last %}|{% endif %}{%- endfor -%}
+{%- endmacro %}
+{% set named_keys = {"tab":"Tab","enter":"Enter","escape":"Escape","space":"Space","backspace":"Backspace","left":"ArrowLeft","right":"ArrowRight","up":"ArrowUp","down":"ArrowDown"} %}
+{% for key, action in terminal.keybindings | items %}{% if action != "close_tab" and (host.os == "macos" or action not in ["new_tab", "next_tab", "previous_tab"]) %}{% set parts = key | split("+") %}
+{% set last = parts[-1] %}
 [[keyboard.bindings]]
-key = {{ parts[-1] | upper | tojson }}
-{% if parts | length > 1 %}mods = {{ parts[:-1] | join("|") | tojson }}
+key = {% if (last | lower) in named_keys %}{{ named_keys[last | lower] | tojson }}{% elif last | length == 1 %}{{ last | upper | tojson }}{% else %}{{ last | tojson }}{% endif %}
+{% if parts | length > 1 %}mods = {{ modifiers(parts[:-1]) | tojson }}
 {% endif %}action = {{ actions[action] | tojson }}
-{% endfor %}{% endif %}
+{% endif %}{% endfor %}{% endif %}
