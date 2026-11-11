@@ -8,7 +8,7 @@
 
 ## 開始使用
 
-從儲存庫根目錄執行 `cargo run --locked -- --help` 查看指令。建置方式、目前可操作的範圍和 exit code 見[操作手冊](docs/06-user-manual/user-manual.md)。模組分工與實作進度見[詳細設計 §3](docs/05-detailed-design/detailed-design.md#3-套件結構)。
+從儲存庫根目錄執行 `cargo run --locked -- --help` 查看指令。建置方式、目前可操作的範圍和 exit code 見[操作手冊](docs/07-user-manual/user-manual.md)。模組分工與實作進度見[詳細設計 §3](docs/05-detailed-design/detailed-design.md#3-套件結構)。
 
 ## 核心概念
 

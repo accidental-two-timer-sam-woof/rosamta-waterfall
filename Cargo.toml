@@ -1,6 +1,6 @@
 [workspace]
-members = ["rosamta", "rosamta-core", "rosamta-platform", "rosamta-testkit"]
-default-members = ["rosamta"]
+members = ["crates/cli", "crates/core", "crates/platform", "crates/testkit"]
+default-members = ["crates/cli"]
 exclude = ["prototypes/pilot"]
 resolver = "3"
 
@@ -12,9 +12,9 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
-rosamta-core = { path = "rosamta-core" }
-rosamta-platform = { path = "rosamta-platform" }
-rosamta-testkit = { path = "rosamta-testkit" }
+rosamta-core = { path = "crates/core" }
+rosamta-platform = { path = "crates/platform" }
+rosamta-testkit = { path = "crates/testkit" }
 clap = { version = "=4.6.7", features = ["derive"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

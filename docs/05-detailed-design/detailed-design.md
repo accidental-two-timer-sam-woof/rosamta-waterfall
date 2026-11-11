@@ -157,14 +157,14 @@ USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱
 
 ### 3.1 crate 劃分
 
-程式以儲存庫根目錄的 `Cargo.toml` 定義 Cargo workspace，分成四個同層 crate。`rosamta/` 是預設建置與執行的成員，四個 crate 共用根目錄的 `Cargo.lock`。`prototypes/pilot/` 有獨立的工具鏈與鎖檔。下表列出第一版的依賴，骨架實際引入的套件見 §3.4。
+儲存庫根目錄的 `Cargo.toml` 定義 Cargo workspace。四個 crate 集中在 `crates/`，共用根目錄的 `Cargo.lock`。`crates/cli` 是預設建置與執行的成員，執行檔名稱為 `rosamta`。`prototypes/pilot/` 有獨立的工具鏈與鎖檔。下表列出第一版的依賴，骨架實際引入的套件見 §3.4。
 
-| crate | 種類 | 內容 | 依賴的 workspace crate | 外部 crate |
-| --- | --- | --- | --- | --- |
-| `rosamta` | 執行檔 | 命令列介面（§9）。啟動時收集主機資訊，建立 platform 的實作，交給 core 的服務 | core、platform | clap、similar、serde、serde_json（§9.10） |
-| `rosamta-core` | 函式庫 | 03 的全部服務與資料型別，以及 `FileSystem`、`GitClient` 兩個 trait | 無 | toml_edit、minijinja、serde、serde_json、sha2 |
-| `rosamta-platform` | 函式庫 | `FileSystem` 的 Unix 與 Windows 實作、`GitClient` 的實作（呼叫 `git` 執行檔），以及主機資訊的收集 | core | rustix（Unix）、windows-sys（Windows） |
-| `rosamta-testkit` | 函式庫，只作 dev-dependency | 可注入故障的 `FileSystem`、在同步點執行注入的 `SyncHook`、建立測試用 home 的工具（§8） | core、platform | — |
+| 目錄 | Cargo 套件名稱 | 種類 | 內容 | 依賴的 workspace crate | 外部 crate |
+| --- | --- | --- | --- | --- | --- |
+| `crates/cli` | `rosamta` | 執行檔 | 命令列介面（§9）。啟動時收集主機資訊，建立 platform 的實作，交給 core 的服務 | core、platform | clap、similar、serde、serde_json（§9.10） |
+| `crates/core` | `rosamta-core` | 函式庫 | 03 的全部服務與資料型別，以及 `FileSystem`、`GitClient` 兩個 trait | 無 | toml_edit、minijinja、serde、serde_json、sha2 |
+| `crates/platform` | `rosamta-platform` | 函式庫 | `FileSystem` 的 Unix 與 Windows 實作、`GitClient` 的實作（呼叫 `git` 執行檔），以及主機資訊的收集 | core | rustix（Unix）、windows-sys（Windows） |
+| `crates/testkit` | `rosamta-testkit` | 函式庫，只作 dev-dependency | 可注入故障的 `FileSystem`、在同步點執行注入的 `SyncHook`、建立測試用 home 的工具（§8） | core、platform | — |
 
 外部 crate 一律以 `=` 鎖定版本。toml_edit、minijinja、rustix、windows-sys 沿用 pilot 驗證過的版本；其餘在實作開始時鎖定，升級時以 MNT-002 的回歸設定集檢查。
 
@@ -233,18 +233,18 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 
 | 位置 | 此階段已接上的功能 | 下一階段銜接點 |
 | --- | --- | --- |
-| `rosamta/` | clap 指令樹、`--help`、`help`、`--version`、基本參數檢查、文字與 JSON 診斷 | 在 `run` 建立 platform 與 core 服務，逐個接上子指令 |
-| `rosamta-core/` | §3.2 的 module 分層、名稱與欄位引用型別、模組或欄位的查詢參數、基本診斷 | 在對應 module 加入 §4 的設定型別、I/O trait 與服務 |
-| `rosamta-platform/` | Linux／macOS 與 Windows 的 `cfg` 入口，以及 `host`、`git` 的 module 位置 | 實作主機資訊、以 handle 為基準的檔案操作與 Git 程序介面 |
-| `rosamta-testkit/` | 測試用暫存 home 與子程序環境，供 CLI integration test 使用 | 隨 core 的 trait 補上同步點與故障注入 |
+| `crates/cli` | clap 指令樹、`--help`、`help`、`--version`、基本參數檢查、文字與 JSON 診斷 | 在 `run` 建立 platform 與 core 服務，逐個接上子指令 |
+| `crates/core` | §3.2 的 module 分層、名稱與欄位引用型別、模組或欄位的查詢參數、基本診斷 | 在對應 module 加入 §4 的設定型別、I/O trait 與服務 |
+| `crates/platform` | Linux／macOS 與 Windows 的 `cfg` 入口，以及 `host`、`git` 的 module 位置 | 實作主機資訊、以 handle 為基準的檔案操作與 Git 程序介面 |
+| `crates/testkit` | 測試用暫存 home 與子程序環境，供 CLI integration test 使用 | 隨 core 的 trait 補上同步點與故障注入 |
 
 骨架鎖定 clap 4.6.7、serde 1.0.229、serde_json 1.0.154，testkit 使用 tempfile 3.27.0，core 的架構測試使用 syn 3.0.10。其餘 §3.1 的套件在對應功能接上時引入。名稱檢查採用 §4.1 的規則。目前診斷只含 `severity`、`code` 與 `message`，來源位置、警告及 `Reported` 隨設定載入與服務介面加入。
 
 `run` 目前對尚未接上服務的指令回報 `cli.not-implemented`，包括 `schema`。通過參數解析後一律回傳 `1`，也不讀取或修改本機設定、來源、狀態與目標檔案。`--format json` 使用 §9.6 的外層欄位，`result` 為 `null`，診斷另送到標準錯誤。clap 參數錯誤採文字輸出。使用 clap 產生的 `help` 子指令時，`--format` 須放在 `help` 前面，輸出仍為文字。已檢查名稱、欄位引用、`--set` 左側格式與不相容的參數組合。路徑正規化、TOML 值轉換、主機資訊、色彩及 §9.5 的 panic hook 隨對應功能實作。
 
-`rosamta/tests/cli.rs` 驗證空白 home 的說明、參數錯誤、exit code、輸出串流與 home 沒有被寫入。`rosamta-core/tests/architecture.rs` 檢查 module 與 `crate::` 依賴方向；§11.3 的建構函式限制會在相應型別加入時一併檢查。`.github/workflows/workspace.yml` 在三平台執行格式檢查、Clippy 與 workspace 測試。標準使用者與平台檔案操作的驗收見 §7–§8，現有 pilot 使用獨立流程。
+`crates/cli/tests/cli.rs` 驗證空白 home 的說明、參數錯誤、exit code、輸出串流與 home 沒有被寫入。`crates/core/tests/architecture.rs` 檢查 module 與 `crate::` 依賴方向；§11.3 的建構函式限制會在相應型別加入時一併檢查。`.github/workflows/workspace.yml` 在三平台執行格式檢查、Clippy 與 workspace 測試。標準使用者與平台檔案操作的驗收見 §7–§8，現有 pilot 使用獨立流程。
 
-使用者可執行的指令及建置方式記在[操作手冊](../06-user-manual/user-manual.md)。實作改變介面、資料格式或行為時，請在同一個 PR 更新 05 的對應章節與圖。
+使用者可執行的指令及建置方式記在[07 操作手冊](../07-user-manual/user-manual.md)。實作改變介面、資料格式或行為時，請在同一個 PR 更新 05 的對應章節與圖。
 
 ## 4. 類別詳細規格
 
@@ -2726,9 +2726,9 @@ testkit 的 `FaultFs` 包裝任一 `FileSystem` 實作，把呼叫轉給被包�
 | 位置 | 內容 | 使用 testkit |
 | --- | --- | --- |
 | core 的單元測試（`#[cfg(test)]`） | 純邏輯：路徑正規化、位置鍵的比較、§5.11 的判定、設定檔與狀態檔的解析、範本的引用分析 | 否 |
-| core 的 integration test（`rosamta-core/tests/`） | 服務搭配真實的檔案系統：觀測與綁定、執行與回復，以及以同步點與故障注入撰寫的情境 | 是 |
+| core 的 integration test（`crates/core/tests/`） | 服務搭配真實的檔案系統：觀測與綁定、執行與回復，以及以同步點與故障注入撰寫的情境 | 是 |
 | platform 的測試 | 每個 `ASM-NN` 的平台行為，延續 pilot 的測試 | 否 |
-| 執行檔的測試（`rosamta/tests/`） | 子指令、輸出格式、exit code、程序中止 | 是，用來建立測試用的 home |
+| 執行檔的測試（`crates/cli/tests/`） | 子指令、輸出格式、exit code、程序中止 | 是，用來建立測試用的 home |
 
 core 的單元測試不能使用 testkit。testkit 依賴 core；core 的單元測試若把 testkit 列為 dev-dependency，Cargo 會編出兩份 core，testkit 回傳的型別與受測的 core 型別不同，trait 的實作對不上。integration test 把 core 當成一般的函式庫連結，只有一份 core，所以注入故障的測試都放在 integration test 或執行檔的測試。
 
@@ -3190,7 +3190,7 @@ Valente 以 conceptual integrity 指系統的一致性：同類的問題以同�
 
 ### 11.3 檢查方式
 
-**clippy**：CI 在三平台執行 `cargo clippy --workspace --all-targets -- -D warnings`。clippy 的設定以 crate 為單位，`rosamta-core/clippy.toml` 不會合併上層的設定，所以 core 的檔案要重複列出共通的項目。
+**clippy**：CI 在三平台執行 `cargo clippy --workspace --all-targets -- -D warnings`。clippy 的設定以 crate 為單位，`crates/core/clippy.toml` 不會合併上層的設定，所以 core 的檔案要重複列出共通的項目。
 
 | 範圍 | `disallowed-methods` | `disallowed-types` |
 | --- | --- | --- |
@@ -3199,7 +3199,7 @@ Valente 以 conceptual integrity 指系統的一致性：同類的問題以同�
 
 core 另外啟用 `clippy::unwrap_used` 與 `clippy::expect_used`（§11.1）。
 
-**module 依賴**：core 的 integration test（`rosamta-core/tests/architecture.rs`）讀取 `src/` 的原始碼檢查，隨 `cargo test` 在三平台執行，因此也是每個 commit 的檢查：
+**module 依賴**：core 的 integration test（`crates/core/tests/architecture.rs`）讀取 `src/` 的原始碼檢查，隨 `cargo test` 在三平台執行，因此也是每個 commit 的檢查：
 
 - module 之間的引用一律寫成 `crate::<module>`，`super::` 只用在同一個 module 內。測試收集每個 module 引用的 `crate::<module>`，與 §3.2 的「可依賴」比對；出現 `super::super` 也視為失敗。
 - `pub(crate)` 無法限制成只有某個 module 能呼叫，所以測試另外確認三個建構函式的呼叫位置：`TemplateValues` 只在 `preflight`、`DesiredContent` 只在 `plan`、`ApprovedPlan` 只在 `apply`。`#[cfg(test)]` 的單元測試檔不在此限，§5.11 的判定等單元測試要直接建立這些值（§8.1）。依 §4 的介面，這三個型別目前都只有上述的建立者（§4.5、§4.12、§4.14、§4.15）。
@@ -3547,4 +3547,4 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 - MNT-002 的回歸設定集與 MNT-003 的 JSON 範例在第一版建立，作為之後版本比對的基準（§1.2、§9.6）。
 - A8：在參考機器上量測 PERF-001；空間不足另以容量有限的檔案系統實測（§8.3）。
 
-**實作時建立**：§11.3 的 clippy 設定與 `rosamta-core/tests/architecture.rs`。兩者都隨每個 commit 執行，不是 06 的測試案例，但 IF-013、USE-001 與 §3.2 的依賴方向以它們為檢查方式。
+**實作時建立**：§11.3 的 clippy 設定與 `crates/core/tests/architecture.rs`。兩者都隨每個 commit 執行，不是 06 的測試案例，但 IF-013、USE-001 與 §3.2 的依賴方向以它們為檢查方式。

@@ -117,7 +117,7 @@ scope 選填。修改階段文件時，可以用 scope 標出是哪一份文件�
 | `design-analysis` | `docs/04-design-analysis` |
 | `detailed-design` | `docs/05-detailed-design` |
 | `test-plan` | `docs/06-test-plan` |
-| `user-manual` | `docs/06-user-manual` |
+| `user-manual` | `docs/07-user-manual` |
 
 程式碼的 scope 可用主要改動的 crate 或 module 名稱，例如 `cli`、`core`、`platform`。
 
@@ -131,7 +131,7 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 ```
 
-實作若偏離 05，請在同一個 PR 更新[詳細設計](docs/05-detailed-design/detailed-design.md)及受影響的圖，記下改動與原因。新增或變更使用者可以執行的操作時，同步補寫[操作手冊](docs/06-user-manual/user-manual.md)中的指令與例子。
+實作若偏離 05，請在同一個 PR 更新[詳細設計](docs/05-detailed-design/detailed-design.md)及受影響的圖，記下改動與原因。新增或變更使用者可以執行的操作時，同步補寫[操作手冊](docs/07-user-manual/user-manual.md)中的指令與例子。
 
 ## Pull Request
 

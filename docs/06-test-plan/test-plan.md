@@ -32,9 +32,9 @@ A1–A26 對照 [04 設計分析](../04-design-analysis/design-analysis.md) §5�
 | 層級 | 執行位置與方法 |
 | --- | --- |
 | 單元 | core 的 `#[cfg(test)]`。用表格案例驗證欄位、Profile、路徑正規化、位置鍵、範本引用、狀態格式與 05 §5.11 的決策表 |
-| 服務整合 | 在 `rosamta-core/tests/` 用 testkit 建立測試 home，固定主機資訊與批次時間。依案例注入 `GitClient`、`SyncHook` 或包裝真實檔案系統的 `FaultFs` |
+| 服務整合 | 在 `crates/core/tests/` 用 testkit 建立測試 home，固定主機資訊與批次時間。依案例注入 `GitClient`、`SyncHook` 或包裝真實檔案系統的 `FaultFs` |
 | 平台 | platform 的測試，使用真實檔案系統與獨立程序核對檔案身分、權限、鎖定、原子替換及平台差異 |
-| CLI 與驗收 | 從 `rosamta/tests/` 啟動執行檔，分開擷取 stdout、stderr 和 exit code，並核對檔案變動。乾淨環境、重開機與效能案例使用發佈候選版的執行檔 |
+| CLI 與驗收 | 從 `crates/cli/tests/` 啟動執行檔，分開擷取 stdout、stderr 和 exit code，並核對檔案變動。乾淨環境、重開機與效能案例使用發佈候選版的執行檔 |
 
 每個案例使用獨立的測試 home、來源目錄、本機設定與狀態目錄。測試資料包含可跨平台重現的主機條件、內容與身分各異的對照檔，以及 home 外的對照目錄。依案例比較操作前後的檔案是否存在、類型、身分、SHA-256、修改時間、權限或 DACL，並核對狀態紀錄與備份位置。唯讀案例確認未建立鎖定檔或暫存檔。預檢失敗時比對所有目標和狀態檔，包括原先不存在的路徑。
 
