@@ -43,6 +43,8 @@ cargo run --locked -- schema manifest --help
 
 來源目錄已有 `manifest.toml` 時，可以使用 `rosamta list` 查看已宣告的輸出，或用 `rosamta query output <名稱或路徑>` 查看來源與引用。`rosamta query refs theme.foreground` 也會搜尋未啟用的輸出。`rosamta query value theme.foreground` 列出欄位值與覆寫來源。這些指令接受 `--format json`。
 
+`rosamta diff` 顯示每個目標的動作和文字差異，`rosamta status` 只列出有變更或需處理的項目。兩者都可加上 `--strict` 模擬嚴格模式。預覽和摘要不會寫入目標或狀態檔。
+
 尚未接上服務的指令會回傳 `cli.not-implemented`，例如 `init` 和 `apply`。
 
 需要檢查 JSON 輸出時，可以執行 `cargo run --locked -- apply --format json`。請預期 exit code 為 `1`。`rosamta` 的標準輸出是一份含 `"result": null` 的 JSON，標準錯誤另有一行 JSON 診斷。參數錯誤、說明和版本資訊使用文字輸出。使用 `help` 子指令時，`--format` 放在 `help` 前面。要分開擷取 `rosamta` 的兩個串流，請直接執行建置後的二進位檔，避開 Cargo 的建置訊息。

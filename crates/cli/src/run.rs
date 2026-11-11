@@ -1,6 +1,7 @@
 use std::{env, io::Write, process::ExitCode};
 
 use rosamta_core::{
+    apply,
     config::{
         load::Config,
         schema::{self, Kind},
@@ -13,8 +14,9 @@ use rosamta_platform::{SystemFs, host};
 use serde_json::Value;
 
 use crate::{
-    cli::{Cli, Command, Format, Query, Schema},
-    output::{json, text},
+    args,
+    cli::{ChoicesArgs, Cli, Command, Format, Query, Schema},
+    output::{json, plan, text},
 };
 
 pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> ExitCode {
@@ -25,6 +27,11 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
             .map_err(|error| diagnostics.error(DiagCode::InvalidConfig, error))
             .ok(),
         Command::List | Command::Query(_) => inspect(&cli.command, &mut diagnostics),
+        Command::Diff(args) | Command::Status(args) => preview(
+            args,
+            matches!(cli.command, Command::Diff(_)),
+            &mut diagnostics,
+        ),
         _ => {
             diagnostics.error(
                 DiagCode::CommandUnavailable,
@@ -59,12 +66,38 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
     ExitCode::from(code)
 }
 
-fn inspect(command: &Command, diagnostics: &mut Diagnostics) -> Option<(Value, String)> {
-    fn report<T>(result: Result<T, impl ToString>, diagnostics: &mut Diagnostics) -> Option<T> {
-        result
-            .map_err(|error| diagnostics.error(DiagCode::InvalidConfig, error.to_string()))
-            .ok()
+fn report<T>(result: Result<T, impl ToString>, diagnostics: &mut Diagnostics) -> Option<T> {
+    result
+        .map_err(|error| diagnostics.error(DiagCode::InvalidConfig, error.to_string()))
+        .ok()
+}
+
+fn preview(
+    options: &ChoicesArgs,
+    diff: bool,
+    diagnostics: &mut Diagnostics,
+) -> Option<(Value, String)> {
+    let host = report(host::collect(), diagnostics)?;
+    let fs = report(SystemFs::open(&host.home), diagnostics)?;
+    let cwd = report(env::current_dir(), diagnostics)?;
+    let choices = report(args::choices(options, &host, &cwd), diagnostics)?;
+    match apply::analyze(&fs, &host, &choices) {
+        Ok(analysis) => {
+            for warning in &analysis.plan.warnings {
+                diagnostics.warning(DiagCode::ApplyWarning, warning);
+            }
+            Some(plan::preview(&analysis.plan, &host, diff))
+        }
+        Err(errors) => {
+            for error in errors {
+                diagnostics.error(DiagCode::PreflightFailed, error);
+            }
+            None
+        }
     }
+}
+
+fn inspect(command: &Command, diagnostics: &mut Diagnostics) -> Option<(Value, String)> {
     let host = report(host::collect(), diagnostics)?;
     let fs = report(SystemFs::open(&host.home), diagnostics)?;
     let config = report(

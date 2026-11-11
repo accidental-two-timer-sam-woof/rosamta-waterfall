@@ -190,3 +190,52 @@ target = "~/.sample"
     );
     assert!(!home.path().join(".sample").exists());
 }
+
+#[test]
+fn preview_renders_templates_and_rejects_colliding_targets_without_writes() {
+    let home = temporary_home().unwrap();
+    let source = home.path().join(".local/share/rosamta");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(
+        source.join("manifest.toml"),
+        "[outputs.sample]\ntemplate = \"sample.j2\"\ntarget = \"~/.sample\"\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("profile.toml"),
+        "[[rules]]\nenable = [\"sample\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        source.join("sample.j2"),
+        "rgb = {{ rgb(theme.foreground) }}\n",
+    )
+    .unwrap();
+    let output = run(&home, &["diff", "--format", "json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["result"]["items"][0]["action"], "create");
+    assert!(
+        value["result"]["items"][0]["diff"]
+            .as_str()
+            .unwrap()
+            .contains("+rgb = [229, 229, 229]")
+    );
+    assert!(!home.path().join(".sample").exists());
+    assert!(!home.path().join(".local/state").exists());
+
+    fs::write(source.join("manifest.toml"), "[outputs.a]\ntemplate = \"sample.j2\"\ntarget = \"~/.sample\"\n[outputs.b]\ntemplate = \"sample.j2\"\ntarget = \"~/.sample\"\n").unwrap();
+    fs::write(
+        source.join("profile.toml"),
+        "[[rules]]\nenable = [\"a\", \"b\"]\n",
+    )
+    .unwrap();
+    let output = run(&home, &["diff"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("target ~/.sample"));
+    assert!(!home.path().join(".sample").exists());
+}

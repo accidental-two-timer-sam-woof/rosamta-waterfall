@@ -21,6 +21,8 @@ pub enum DiagCode {
     InvalidConfig,
     UnknownOutput,
     QueryFailed,
+    PreflightFailed,
+    ApplyWarning,
 }
 
 impl DiagCode {
@@ -30,6 +32,8 @@ impl DiagCode {
             Self::InvalidConfig => "config.invalid",
             Self::UnknownOutput => "config.unknown-output",
             Self::QueryFailed => "query.failed",
+            Self::PreflightFailed => "preflight.failed",
+            Self::ApplyWarning => "apply.warning",
         }
     }
 }

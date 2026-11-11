@@ -101,25 +101,25 @@ impl Command {
 pub(crate) struct ChoicesArgs {
     /// Block application if any managed output has drifted.
     #[arg(long)]
-    strict: bool,
+    pub strict: bool,
     /// Replace a drifted target at this path. May be repeated.
     #[arg(long, value_name = "PATH")]
-    overwrite: Vec<OsString>,
+    pub overwrite: Vec<OsString>,
     /// Replace all drifted targets.
     #[arg(long, conflicts_with = "accept_all")]
-    overwrite_all: bool,
+    pub overwrite_all: bool,
     /// Accept the drift at this path. May be repeated.
     #[arg(long, value_name = "PATH")]
-    accept: Vec<OsString>,
+    pub accept: Vec<OsString>,
     /// Accept drift in all targets.
     #[arg(long)]
-    accept_all: bool,
+    pub accept_all: bool,
     /// Allow removal of a modified obsolete target. May be repeated.
     #[arg(long, value_name = "PATH")]
-    delete_modified: Vec<OsString>,
+    pub delete_modified: Vec<OsString>,
     /// Allow removal of all modified obsolete targets.
     #[arg(long)]
-    delete_modified_all: bool,
+    pub delete_modified_all: bool,
 }
 
 impl ChoicesArgs {

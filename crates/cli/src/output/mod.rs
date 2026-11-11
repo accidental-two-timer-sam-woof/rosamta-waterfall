@@ -2,4 +2,5 @@
 
 pub(crate) mod diff;
 pub(crate) mod json;
+pub(crate) mod plan;
 pub(crate) mod text;

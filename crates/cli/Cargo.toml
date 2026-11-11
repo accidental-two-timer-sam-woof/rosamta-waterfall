@@ -12,6 +12,7 @@ rosamta-core.workspace = true
 rosamta-platform.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+similar = "=3.2.1"
 
 [dev-dependencies]
 rosamta-testkit.workspace = true

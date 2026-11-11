@@ -1,7 +1,37 @@
 use clap::{CommandFactory, error::ErrorKind};
-use rosamta_core::name::FieldRef;
+use rosamta_core::{host::HostContext, name::FieldRef, path::HomePath, plan::Choices};
 
-use crate::cli::{Cli, Command, InitArgs, ModifyArgs, Property};
+use crate::cli::{ChoicesArgs, Cli, Command, InitArgs, ModifyArgs, Property};
+
+pub(crate) fn choices(
+    args: &ChoicesArgs,
+    host: &HostContext,
+    cwd: &std::path::Path,
+) -> Result<Choices, String> {
+    let parse = |values: &[std::ffi::OsString]| {
+        values
+            .iter()
+            .map(|value| HomePath::argument(value, host, cwd).map(|path| path.key(host.platform)))
+            .collect::<Result<std::collections::BTreeSet<_>, _>>()
+    };
+    let overwrite = parse(&args.overwrite)?;
+    let accept = parse(&args.accept)?;
+    if let Some(conflict) = overwrite.intersection(&accept).next() {
+        return Err(format!(
+            "~/{} was specified for both --overwrite and --accept",
+            conflict
+        ));
+    }
+    Ok(Choices {
+        strict: args.strict,
+        overwrite_all: args.overwrite_all,
+        accept_all: args.accept_all,
+        delete_modified_all: args.delete_modified_all,
+        overwrite,
+        accept,
+        delete_modified: parse(&args.delete_modified)?,
+    })
+}
 
 pub(crate) fn validate(command: &Command) -> Result<(), clap::Error> {
     let result = match command {
