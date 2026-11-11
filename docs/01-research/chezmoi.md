@@ -2,6 +2,8 @@
 
 本文研究 dotfile 管理工具 chezmoi，目的是為 rosamta 的 SRS 整理需求。重點放在 rosamta 的三個核心概念：Profile、Module、Template，並在第 7 節整理出候選需求。
 
+本篇保留前期研究的提案。首版採用、修改或不採用的結果見 [SRS 附錄 A.1](../02-srs/srs.md#a1-研究候選需求的去向)；例如正式規格由 manifest 宣告各平台的輸出路徑，Profile 選擇啟用的輸出並可覆寫欄位值。
+
 ## 目錄
 
 1. [基本資訊](#1-基本資訊)

@@ -4,7 +4,7 @@
 
 ### 1.1 基準文件
 
-本文件依 [SRS](../02-srs/srs.md)、[初步設計](../03-preliminary-design/uml.md)與[設計分析](../04-design-analysis/design-analysis.md)撰寫。需求範圍、優先序與驗收條件以 SRS 為準（04 §1）。03 的類別與循序圖、04 的規則與驗證情境，在本文件中細化為介面、格式與演算法；與兩者不同的地方，會在相關章節說明原因。
+本文件依 [SRS 1.6 草案](../02-srs/srs.md)、[初步設計](../03-preliminary-design/uml.md)與[設計分析](../04-design-analysis/design-analysis.md)撰寫。需求範圍、優先序與驗收條件以 SRS 為準（04 §1）。03 的類別與循序圖、04 的規則與驗證情境，在本文件中細化為介面、格式與演算法。§12 說明各階段的對應。
 
 ### 1.2 第一版範圍
 
@@ -48,13 +48,13 @@
 | FR-MAN-014（optional） | 延後 | 須逐一支援各種輸出格式的解析與局部合併 |
 | FR-INI-007（optional） | 延後 | 屬於互動模式，理由同 FR-MAN-022 |
 
-延後互動模式後，04 §6 的「非嚴格模式的互動」不再適用；03 §11 提到的 `DependencyChecker` 也不建立。
+互動模式與依賴檢查延後，第一版不建立這兩項功能的服務或介面（03 §11、04 §6）。
 
 延後的需求依 SRS 附錄 A.3 的規定，記錄在 A.3 與修訂紀錄（SRS 1.2 版）。USE-002 的驗收條件以「啟用互動」為前提，延後互動模式後如何滿足，見 §12。
 
 ## 2. 技術選擇
 
-本節依 04 §4 的三項選擇，分別寫出比較、定案與驗證條件。§2.2、§2.3 的驗證結果來自一次性探查：2026-11-09 在 Linux（Arch、rustc 1.99.1）執行，只涵蓋下表列出的案例。這些案例會整理成可重跑的 pilot 測試，放在 `prototypes/pilot/`，並在三平台的 CI 上執行。
+本節依 04 §4 的三項選擇，分別寫出比較、定案與驗證條件。§2.2、§2.3 的表格記錄 2026-11-09 在 Linux（Arch、rustc 1.99.1）的探查。可重跑的 pilot 測試 P4、P5 位於 `prototypes/pilot/`，跨平台結果見 §7.1。
 
 ### 2.1 實作語言、工具鏈與發佈
 
@@ -76,7 +76,7 @@ git 的另外兩個選項：git2 須連結 libgit2，SSH 與 HTTPS 再分別依�
 驗證條件（04 §4 第 3 列）：
 
 - 單檔替換、符號連結接管與回復：pilot P1–P3 在三平台以一般使用者權限執行。
-- 單一執行檔：pilot 的 CI 為三平台建置執行檔，以 `ldd`、`otool -L`、`dumpbin /dependents` 檢查動態依賴，並在只安裝作業系統與 git 的環境執行。
+- 單一執行檔：pilot 的 CI 為三平台建置原型，以 `ldd`、`otool -L`、`dumpbin /dependents` 檢查動態依賴（ASM-14）。只安裝作業系統與 git 的乾淨環境驗收，由 06 的 DIST-01 使用首版成品執行。
 
 ### 2.2 設定格式與保留格式的編輯
 
@@ -205,11 +205,11 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | 3 | `query` | `QueryService`、`OutputSummary`、`OutputListing`、`OutputDescription`、`ResolvedValueDescription` | 引用、輸出與欄位值的查詢 | 第 0 層、`config`、`resolve`、`template` |
 | 3 | `init` | `InitializationService`、`GitClient`、`InitializationRequest`、`InitializationResult` | 初始化 | 第 0 層、`config`、`docedit`、`apply` |
 
-與 03 C4 不同的依賴：
+03 C4 的服務關係在 module 層級細化如下：
 
-- `ConfigLoader` 經由 `FileSystem` 讀取來源目錄，理由見 §3.1。C4 只畫出 `Planner`、`Executor` 等對 `FileSystem` 的依賴。
+- `ConfigLoader` 經由 `FileSystem` 讀取來源目錄，理由見 §3.1。
 - `PreflightChecker` 使用 `template` 的靜態引用，在渲染前找出拼錯的欄位（§2.3）。
-- `QueryService` 使用 `template` 的靜態引用回答引用查詢。04 §2 已要求查詢共用範本的引用資訊，C4 沒有畫出。
+- `QueryService` 使用 `template` 的靜態引用回答引用查詢。這項依賴對應 03 C4 的來源載入及 04 §2 的範本引用查詢。
 - `ManifestService` 使用 `config` 取得內建輸出的名稱，使用 `docedit` 修改設定檔。C4 只畫出 `StateStore` 與 `FileSystem`。
 - 摘要（FR-QRY-005）是 `ApplyService` 的一種模式，不屬於 `QueryService`，因為它與預覽共用 `Planner`（§1.2）。
 
@@ -233,27 +233,27 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 
 介面以 Rust 簽名表示，省略 derive、私有欄位與 `pub(crate)` 的項目。生命週期 `'a` 表示服務借用呼叫端建立的依賴（§8.1）。實作時可以調整名稱，但型別表達的限制必須保留，例如「先取得鎖定才能修改設定檔」。
 
-與 03 不同的地方：
+03 C1–C4 的概念介面與本節的對應：
 
 | 03 | 本節 | 理由 |
 | --- | --- | --- |
-| C1 `Field` 同時有宣告與值 | 分成欄位宣告 `FieldDecl` 與設定值 `Assignment` | 值來自四個層級的不同檔案（§5.5–§5.8），不屬於模組的宣告 |
+| C1 `FieldDecl` 與使用者欄位設定 | `FieldDecl` 與 `Assignment` | 欄位宣告含型別、必填與預設值；各層級的設定值另記錄來源（§5.5–§5.8） |
 | C1 `sourceKind` 與 `sourcePath` | 一個 enum `SourceSpec` | 範本與原樣複製只能選一種，以型別排除兩者都有或都沒有的情況 |
 | C1 `Template` | 來源 `TemplateRef` 與中繼資料 `TemplateMeta` | 中繼資料寫在範本裡（§5.9），讀到範本才知道 |
-| C2 `ResolvedValues.values` 為 `FieldValue` | 存未檢查的 `RawValue`，檢查後才轉成 `TemplateValues` | 04 §2 把型別檢查交給 `PreflightChecker`；以型別保證未通過檢查的值不會進入範本 |
+| C2 `ResolvedValues` | `Resolved` 同時保存未檢查的 `RawValue` 與來源，`conflicted` 另記同層衝突 | `PreflightChecker` 驗證後才產生 `TemplateValues`，供範本使用（04 §2） |
 | C4 `ConfigLoader.load()` | `load_local`、`load_layout` 與 `load` | 來源目錄的位置記在本機設定（§5.1），必須先讀本機設定 |
-| C4 `PreflightChecker.validate(context, optionalPlan)` | `check_inputs`、`check_targets`、`check_plan` 三個階段 | 三個階段需要的資料不同。USE-004 要求欄位值有錯時仍找出目標碰撞，碰撞的檢查因此不能等到渲染之後 |
-| C4 `QueryService` | 加上 `list_outputs` | FR-MAN-026 的列出輸出是唯讀的，與其他查詢共用 Profile 判定 |
+| C4 `PreflightChecker` | `check_inputs`、`check_targets`、`check_plan`，分別接收各階段的資料 | USE-004 要求欄位值有錯時仍找出目標碰撞，碰撞檢查不可等到渲染之後 |
+| C4 `QueryService::list_outputs` | 與其他查詢共用已載入的設定及 Profile 判定 | FR-MAN-026 的列出輸出是唯讀操作 |
 | C4 管理方法的參數 | 加上 `&WriteLock`；`add` 改收 `AddRequest` | 以型別確保修改前已取得鎖定（§6.7）；納入時可以指定輸出名稱 |
-| C4 回傳 `Diagnostics` | 以 `&mut Diagnostics` 收集（§4.1） | 錯誤與警告走同一條路，USE-004 才能一次列出全部 |
-| C3 `PlanItem` 的字串成員 | enum，加上觀測、期望內容與紀錄的變更（§4.12） | 執行時依觀測核對，以期望內容寫入；03 C3 末段要求補齊這個傳遞契約 |
-| C3 `ApplyReport.exitCode` | `outcome()`，exit code 由 §9.7 對應 | core 不決定 exit code，與 §4.1 一致 |
-| C4 `Planner.build(config, values, state)` | `targets` 與 `plan` | 目標碰撞須在渲染前檢查（§4.6） |
-| C4 `FileSystem` 的 `inspect`、`backup`、`applyAtomically` | `inspect` 與三次呼叫的綁定操作 `prepare`、`execute`、`confirm` | 同步點須落在核對與系統呼叫之間（§8.2）；備份與快照也是綁定的操作 |
-| C4 `RecoveryManager` 的 `begin()`、`capture(path)`、`commit()` | `begin` 接收狀態的基準，`capture` 接收觀測，`commit` 改名為 `finish`；加上 `record`、`temp_name`、`clean_stale` | 快照要依觀測核對（A16）；回復要知道本批做過的每個操作 |
-| C4 `StateStore.saveAtomically(state)` | `commit(lock, base, new, temp)` | 被取代的必須是載入的版本（A23） |
-| C4 `ApplyService.run(request)`、`Executor.execute(plan)` | `preview` 與 `apply`；`execute` 只接收 `ApprovedPlan` | 預覽沒有鎖定，也就無法寫入；以型別確保只執行通過檢查的計畫 |
-| C4 `GitClient.cloneToStaging(url)` | `clone_into(url, dest)` | 暫存目錄由 `FileSystem` 建立，才能核對身分（§6.3） |
+| C4 各服務的診斷 | 以 `&mut Diagnostics` 收集（§4.1） | 錯誤與警告走同一條路，USE-004 才能一次列出全部 |
+| C3 `PlanItem` | 動作與處理方式為 enum；細化 `observation`、`desired` 與紀錄變更（§4.12） | 依觀測核對並寫入既有的期望內容，以型別表達保留原因與紀錄更新 |
+| C3 `ApplyReport` | `outcome()`、`failure`、`recovery`（§4.14） | core 計算批次結果；CLI 依 §9.7 決定 exit code |
+| C4 `Planner.targets` 與 `Planner.plan` | `TargetSet` 只含路徑資訊；`PlanInput` 提供已核對的規劃輸入 | 目標碰撞須在渲染前檢查（§4.6） |
+| C4 的 `FileSystem.prepare`、`Prepared.execute`、`Executed.confirm` | `prepare` 接收鎖定及具體的 `FsOp`；`confirm` 回傳 `OpOutcome` | 同步點落在各次呼叫之間，備份與快照也沿用同一操作契約（§4.10、§8.2） |
+| C4 `RecoveryManager` | `begin` 接收狀態基準，`capture` 接收觀測，`finish` 結束成功批次；另有 `record`、`temp_name`、`clean_stale` | 快照要依觀測核對（A16）；回復要知道本批做過的每個操作 |
+| C4 `StateStore.commit(base, newState)` | `commit(lock, base, new, temp)` | 被取代的必須是載入的版本（A23） |
+| C4 `ApplyService` 的 `preview`、`apply` 與 `Executor.execute` | 只有 `apply` 要求 `&WriteLock`；`execute` 要求 `ApprovedPlan` | 預覽唯讀；只執行通過檢查的計畫 |
+| C4 `GitClient.clone_into(url, heldDir)` | `clone_into(url, dest)`，`dest` 由持有的目錄衍生 | 暫存目錄由 `FileSystem` 建立，才能核對身分（§6.3） |
 
 ### 4.1 共通約定
 
@@ -634,7 +634,11 @@ pub mod schema {
 - 有任何錯誤時 `is_complete()` 為 `false`。套用與查詢依此決定是否繼續（§4.6、§4.9）。
 - `target` 與 `source` 只檢查語法（`RawPath::parse`），三個平台的 `target` 都檢查。展開要用到目前主機的環境變數，由預檢處理（§4.6）。
 
-**FR-MAN-004 的第一處**：TOML 不允許重複的表格與鍵，toml_edit 在遇到第二處時回報語法錯誤。`ConfigLoader` 取出錯誤中的鍵名，把檔案截到第二處所在行之前再解析一次。截斷的部分在第一個錯誤之前，所以仍是合法的 TOML，從中可以找到第一處的位置。兩處都列在診斷中。第二處在同一行內（例如 inline table 中的重複鍵）時，兩處都指向這一行。
+**FR-MAN-004 的重複輸出診斷**：toml_edit 仍負責正式解析。manifest 無法解析時，以補充掃描找出重複的輸出宣告。掃描只建立名稱與來源位置的索引，結果不用於合併設定、產生計畫或寫入。做法如下：
+
+1. 依 TOML 的詞法切分表格標頭、鍵與指定值。略過註解，辨識基本與字面字串、多行字串及逸出，追蹤陣列與 inline table 的括號，避免把值中的 `[outputs.x]` 認成表格。以同一套 TOML 鍵規則解碼每個路徑元件，帶引號的點留在同一個元件；記錄名稱在原檔的行與欄。
+2. 依目前表格與 inline table 的範圍組成完整鍵路徑，對 `outputs` 底下的名稱分組。顯式表格如 `[outputs.same]`、`[outputs . "same"]`，以及指定整個輸出值的鍵如 `outputs.same = { … }`，依解碼後的名稱識別。以不同的點分屬性填入同一個輸出（如 `outputs.same.copy`、`outputs.same.target.linux`）只算一個定義。依 TOML 的表格定義規則區分可補上顯式標頭的隱含父表格、已由點分鍵定義的表格與已封閉的 inline table，只有重複定義輸出本身才納入這項診斷。
+3. 保留正式解析器回報的重複位置與第一處宣告（可重解析第二處前的有效前綴補足）。以補充掃描加入其他已確認的位置，去除重複的診斷位置。宣告重複時繼續掃描至檔尾，不因單一名稱已重複而停止。每個重複名稱回報一次 `config.duplicate`，位置含第一次及其後每一處宣告，按原檔順序列出。可辨識的其他 TOML 語法問題仍用原解析診斷；掃描遇到無法可靠定位的語法時停止，保留原解析錯誤。一般重複屬性鍵或其他 TOML 語法錯誤沿用正式解析器的診斷。
 
 **錯誤**：
 
@@ -643,7 +647,7 @@ pub mod schema {
 | `config.read-failed` | 讀取失敗，附作業系統的錯誤；或檔案、路徑中有連結（§6.1） |
 | `config.not-utf8` | 無法以 UTF-8 解碼，指出所在的行 |
 | `config.syntax` | TOML 語法錯誤 |
-| `config.duplicate` | 重複的輸出、表格或鍵，列出每一處（FR-MAN-004） |
+| `config.duplicate` | 重複的輸出、表格或鍵，列出每一處。重複輸出名稱另依上述掃描補足所有宣告位置（FR-MAN-004） |
 | `config.unknown-key` | 不認得的鍵，列出該位置可用的鍵（FR-MAN-029） |
 | `config.invalid-value` | 型別錯誤、名稱格式不符、`permissions` 超出範圍、`target` 語法錯誤等 |
 | `config.missing-key` | 缺少必要的鍵，例如 `[outputs.*]` 沒有 `target`，欄位宣告沒有 `type` |
@@ -655,7 +659,7 @@ pub mod schema {
 | `config.invalid-field-decl` | 欄位宣告不合理：`options` 為空或重複、`min` 大於 `max`、`min`/`max` 用在不適用的型別等 |
 | `config.missing-manifest` | 來源目錄沒有 `manifest.toml` |
 
-**隱藏的設計決定**：設定檔使用 TOML 與 toml_edit，其他 module 只看到 `RawValue`、`Located` 等本 module 的型別；BOM、換行與行號的對應；逐表格檢查的方式；找出重複的第一處的方法；內建資源的嵌入方式與合併演算法。
+**隱藏的設計決定**：設定檔使用 TOML 與 toml_edit，其他 module 只看到 `RawValue`、`Located` 等本 module 的型別；BOM、換行與行號的對應；逐表格檢查的方式；找出重複輸出宣告位置的方式；內建資源的嵌入方式與合併演算法。
 
 ### 4.4 ValueResolver
 
@@ -696,7 +700,7 @@ impl ResolvedValues {
 }
 ```
 
-C2 的 `values` 與 `provenance` 兩個 map 合併成一個：值與來源一定同時存在。
+C2 的 `Resolved` 同時包含值與來源。這裡另保留被較高層級取代的來源，供欄位查詢（§4.9）。
 
 **前置條件**：`config` 與 `local` 由 `ConfigLoader` 產生。`config` 不完整時仍可呼叫，結果只涵蓋讀到的部分。
 
@@ -1232,7 +1236,7 @@ pub trait Executed { fn confirm(self: Box<Self>) -> Result<OpOutcome, FsError>; 
 pub trait LockGuard {}
 ```
 
-會改變檔案的方法都要求 `&WriteLock`，所以不取得鎖定的預覽與查詢無法寫入（FR-PLN-004、FR-QRY-006），由型別保證，不必靠 review。`ensure_private_dir` 是唯一的例外：取得鎖定之前，必須先有放鎖定檔的狀態目錄（§6.7）。它只建立 rosamta 自己的目錄，不碰任何輸出。
+修改輸出、狀態及設定的方法要求 `&WriteLock`。建立程式私有目錄的 `ensure_private_dir` 與取得鎖定的 `lock` 不要求預先持有鎖定，因為 `WriteLock::acquire` 必須先準備狀態目錄與其中的鎖定檔（§6.7）。唯讀指令不進入鎖定或目錄準備流程（FR-PLN-004、FR-QRY-006）。
 
 **綁定的操作**：每個操作分成三次呼叫，對應 §6.3 的步驟。core 在呼叫之間到達同步點（§8.2）：
 
@@ -1535,9 +1539,9 @@ impl DesiredContent {
 }
 ```
 
-C3 以字串表示的 `action`、`disposition`、`reason` 改成 enum，`reason` 併入 `Retain`：保留的項目一定有原因，其他項目沒有。每個 enum 值有固定的字串，供 IF-004 使用（MNT-003）。
+C3 的 `action`、`disposition` 在本節以 enum 表示，保留原因隨 `Retain` 保存。每個 enum 值有固定的字串，供 IF-004 使用（MNT-003）。
 
-**期望內容與 Executor 的傳遞契約**（03 C3 末段、04 §2）：
+**期望內容與 Executor 的傳遞契約**（03 C3、04 §2）：
 
 - 執行期參照就是 `DesiredContent`：規劃時把渲染結果或原樣複製來源的位元組放進記憶體，同時計算 SHA-256。`DesiredContent` 的建構函式是 `pub(crate)`，core 中只有 `Planner` 呼叫它（§11.3 的測試檢查），所以內容一定來自預檢時的那一次讀取或渲染。
 - `Executor` 只寫入 `desired.bytes()`，不讀取來源、不渲染（A24）。寫入後以 `OpOutcome::written` 核對 `metadata().sha256`；不同時是執行錯誤（§4.14）。內容無法取得的情況因此只剩寫入途中損毀，§8.3 以 `FaultFs` 注入。
@@ -1559,7 +1563,7 @@ C3 以字串表示的 `action`、`disposition`、`reason` 改成 enum，`reason`
   - 比對到的紀錄帶有 `forget_pending` 時一律 `Retain(ForgetPending)`。
   - 比對到的紀錄名稱與本輸出不同時，依上述規則得到 `RecordChange::Keep` 的項目改為 `RecordChange::Rename`，保留的項目除外；`Put` 本來就以本輸出的名稱寫入。所以輸出改名而路徑與內容都沒變時（§5.11 第 3 列、`create-only` 的目標已存在），紀錄也改成新名稱。`Rename` 的項目只更新紀錄，結果為完成，與其他預定完成的項目一樣在提交前重檢（§6.6 第 3 步）。保留的項目依 FR-APL-009 不改紀錄，名稱維持舊的，直到之後某次套用不再保留它；`forget` 因此另外以位置鍵找紀錄（§4.8）。
 - 沒有被啟用輸出比對到的紀錄，各產生一個清除項目，依 §5.11 的清除表。觀測遇到 `LinkInPath` 時為 `Retain(LocationUnconfirmed)`；位於保留位置時為 `Retain(Reserved)`；已修改而 `choices` 指定刪除時為 `Resolve(Delete)`。
-- 嚴格模式：drift 衝突一律為 `Retain(DriftConflict)`，不套用 `choices`（03 §12 第 1 項），`strict_blocked()` 為 `true`。
+- 嚴格模式：drift 衝突一律為 `Retain(DriftConflict)`，不套用 `choices`（03 §12「嚴格模式與 exit code」），`strict_blocked()` 為 `true`。
 - `Selector::Path` 以位置鍵與項目比較。沒有比對到任何 drift 衝突（`drift`）或已修改的舊輸出（`delete_modified`）時，回報警告 `apply.choice-unmatched`。同一個項目同時被指定覆寫與接受時，回報錯誤 `apply.choice-conflict`；`All` 與 `Path` 都指定時，`Path` 優先。
 - 順序：先列清除項目，再列啟用輸出，各自依 `target` 排序。清除在前，舊輸出刪除後空出的路徑才能給新輸出使用。新目標的某一層上層是本批要刪除的舊輸出時，該項目的觀測改為「從那一層起不存在」；上層是其他非目錄的項目（`blocker`）時，`check_plan` 回報 `preflight.unsupported-type`。
 - `Planner` 只使用 `FileSystem` 的唯讀方法。
@@ -1590,7 +1594,7 @@ impl<'a> RecoveryManager<'a> {
     /// 記下一個已生效的操作，以及回復它需要的資料。
     pub fn record(&mut self, done: Done);
     pub fn rollback(self, diags: &mut Diagnostics) -> RecoveryReport;
-    /// 批次成功：依 journal 清理暫存檔，刪除 txn/<批次編號>/（C4 的 commit）。
+    /// 批次成功：依 journal 清理暫存檔，刪除 txn/<批次編號>/（C4 的 finish）。
     pub fn finish(self, diags: &mut Diagnostics);
 
     /// 取得鎖定後、規劃前，清理殘留的批次目錄（§6.5）。由執行檔呼叫。
@@ -1695,7 +1699,7 @@ pub enum ExecErrorKind {
 }
 ```
 
-C3 的 `ApplyReport.exitCode` 改為 `outcome()`：core 不決定 exit code，§9.7 把 `Completed`、`Partial`、`Failed` 對應到 `0`、`2`、`1`。C3 的 `errors` 與 `rollbackFailures` 分別是 `failure` 與 `recovery`；批次在第一個錯誤就停止（§6.6），所以原始錯誤只有一個。
+依 C3 的分工，core 的 `outcome()` 計算批次結果；§9.7 將 `Completed`、`Partial`、`Failed` 對應到 `0`、`2`、`1`。批次在第一個執行錯誤就停止（§6.6），原始錯誤記在 `failure`，各項回復結果記在 `recovery`。
 
 **每個項目的操作**（§6.6 步驟 2）：
 
@@ -1750,7 +1754,7 @@ pub struct ApplyRequest {
 }
 ```
 
-C4 的 `run(request)` 分成 `preview` 與 `apply`：只有套用要求 `&WriteLock`，預覽因此無法寫入（§4.10）。`started_at` 由呼叫端傳入，core 不讀取系統時間，測試可以指定（§8.1）。
+C4 的 `preview` 與 `apply` 分開，只有套用要求 `&WriteLock`，預覽因此無法寫入（§4.10）。`started_at` 由呼叫端傳入，core 不讀取系統時間，測試可以指定（§8.1）。
 
 **流程**：兩個方法共用第 1–8 步：
 
@@ -1761,7 +1765,7 @@ C4 的 `run(request)` 分成 `preview` 與 `apply`：只有套用要求 `&WriteL
 5. `Planner::targets`。
 6. `check_inputs` 與 `check_targets` 都執行（§4.6）。`config.is_complete()` 為 `false`、或任一階段失敗時，到此結束，回傳 `Err`。
 7. `Planner::plan`，再 `check_plan`。
-8. 模式檢查：`plan.strict_blocked()` 時，對每個 drift 衝突回報錯誤 `apply.strict-conflict`，附輸出名稱與目標路徑（03 §12 第 1 項）。
+8. 模式檢查：`plan.strict_blocked()` 時，對每個 drift 衝突回報錯誤 `apply.strict-conflict`，附輸出名稱與目標路徑（03 §12「嚴格模式與 exit code」）。
 
 `preview` 在第 7 步後回傳計畫；第 8 步只在套用時阻擋，預覽照常回傳計畫，並在計畫中標出嚴格模式將不寫入任何輸出（FR-DRF-003）。`apply` 在第 8 步通過後到達 `AfterPreflight`，建立 `ApprovedPlan`，交給 `Executor::execute`，回傳它的回報。
 
@@ -1821,7 +1825,7 @@ pub struct InitializationResult {
 }
 ```
 
-C4 的 `GitClient.cloneToStaging(url)` 改成 `clone_into(url, dest)`：暫存目錄由 `InitializationService` 經由 `FileSystem` 建立並持有，才能依 §6.3 記下身分、在 clone 期間限制 git 的寫入位置，並在 clone 後核對；`GitClient` 只執行 git。
+C4 的 `GitClient.clone_into` 接收從持有目錄衍生的 `dest`。暫存目錄由 `InitializationService` 經由 `FileSystem` 建立並持有，才能依 §6.3 記下身分、在 clone 期間限制 git 的寫入位置，並在 clone 後核對；`GitClient` 只執行 git。
 
 platform 的實作以 `std::process` 執行 git。Linux 與 macOS 在子程序 exec 之前以 `pre_exec` 呼叫 `fchdir`，進入 `WorkDir::Fd` 的目錄，再執行 `git clone -- <url> .`：git 以工作目錄的實際位置解析 `.`，clone 開始前路徑上的目錄被換成連結，git 仍寫入持有的目錄（ASM-22）。Windows 沒有以 handle 指定工作目錄的方式，執行 `git clone -- <url> <dest>`，由 `HeldDir` 在 clone 期間持有 home 到暫存目錄的每一層，替換被擋下（ASM-08）。`--` 避免以 `-` 開頭的位址被當成選項；標準輸入接到空裝置，設定 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never` 與 `SSH_ASKPASS_REQUIRE=never`，git 需要帳號密碼時直接失敗，不等待輸入，也不開啟登入視窗（FR-INI-006、§9.8）。SSH 使用使用者既有的金鑰與設定（AS-4）。
 
@@ -2233,7 +2237,7 @@ SEC-001：狀態檔只有名稱、路徑、檔案編號、權限位元與 SHA-25
 
 ### 5.11 比較基準與判定
 
-本節是 03 C3 兩份基準的演算法，以 03 §12 第 3 項的三組案例驗證。以下 C 表示目標現況的比較資料，N 表示本次的期望，O、D 分別是紀錄中的實際基準與期望基準。C 是否含權限，依本次輸出的宣告決定（§5.10）。
+本節是 03 C3 兩份基準的演算法，以 03 §12「兩份比較基準」的三組案例驗證。以下 C 表示目標現況的比較資料，N 表示本次的期望，O、D 分別是紀錄中的實際基準與期望基準。C 是否含權限，依本次輸出的宣告決定（§5.10）。
 
 - **C 符合 N**：`sha256` 相同；N 有 `mode` 時，目前的權限也與它相同。
 - **外部修改**：C 與 O 的 `sha256` 不同，或 O 有 `mode` 而目前的權限與它不同。O 沒有 `mode` 時不比較權限，宣告權限之前的紀錄因此不會被當成 drift。
@@ -2283,7 +2287,7 @@ SEC-001：狀態檔只有名稱、路徑、檔案編號、權限位元與 SHA-25
 
 ### 5.12 接管備份
 
-03 §12 第 2 項的定案：
+03 §12「接管備份與回復快照」的定案：
 
 - 位置：`<狀態目錄>/backups/<批次編號>/<目標在 home 內的相對路徑>`，例如 `~/.local/state/rosamta/backups/20261109T061530Z/.config/ghostty/config`。沿用目標的相對路徑，使用者不必查表就能找到原檔。批次編號已唯一（§5.1），同一批次內兩個目標不會解析為同一路徑（FR-PLN-009），所以備份的名稱唯一。
 - 只在批次中有接管時才建立批次目錄。目錄權限為 `0700`。
@@ -2296,7 +2300,7 @@ SEC-001：狀態檔只有名稱、路徑、檔案編號、權限位元與 SHA-25
 
 ### 5.13 停止管理的表示
 
-**內建輸出**（03 §12 第 6 項）：內建輸出不在 manifest 中，無法「移除宣告」。停止管理時，在 manifest 寫入只含 `removed = true` 的覆寫：
+**內建輸出**（03 §12「停止管理與同位置新輸出」）：內建輸出不在 manifest 中，無法「移除宣告」。停止管理時，在 manifest 寫入只含 `removed = true` 的覆寫：
 
 ```toml
 [builtin.alacritty]
@@ -2318,7 +2322,7 @@ removed = true
 
 ## 6. 關鍵演算法與平台處理
 
-本節定義路徑的表示與比較、檔案操作如何與重檢綁定、寫入與回復，以及多程序互斥，回答 03 §12 第 4、5 項與 §5 留給本節的決定。演算法只依賴 §7 的平台假設，其中本節新增的列在 §7.7。各演算法由哪個類別負責見 §4；同步點與故障注入見 §8。
+本節定義路徑的表示與比較、檔案操作如何與重檢綁定、寫入與回復，以及多程序互斥，細化 03 §12 的「並行與外部修改」「路徑安全」，以及本文件 §5 的路徑規則。演算法只依賴 §7 的平台假設，其中本節新增的列在 §7.7。各演算法由哪個類別負責見 §4；同步點與故障注入見 §8。
 
 ### 6.1 home 與路徑
 
@@ -2370,7 +2374,7 @@ FR-PLN-010 的兩個驗收例：`~/a/../b.conf` 在正規化時就變成 `~/b.co
 
 ### 6.3 觀測與操作綁定
 
-預檢通過，不代表執行時目標仍然相同（03 §12 第 4 項）。本節的做法：規劃時記錄觀測；每次操作前依觀測核對，並把核對和操作綁在同一組 handle 上；平台無法綁定的空窗，以操作後的核對找出並復原。
+預檢通過，不代表執行時目標仍然相同（03 §12「並行與外部修改」）。本節的做法：規劃時記錄觀測；每次操作前依觀測核對，並把核對和操作綁在同一組 handle 上；平台無法綁定的空窗，以操作後的核對找出並復原。
 
 **觀測**：規劃時，`Planner` 為每個目標記錄下列資料。狀態檔、本機設定與 manifest 的讀取也記錄同樣的觀測。
 
@@ -2493,13 +2497,13 @@ Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保�
 
 ### 6.7 多程序互斥
 
-SRS AS-5 假設同一組目標同時只有一個 rosamta 程序在套用；03 §12 第 4 項要求說明多個 rosamta 同時執行時怎麼處理。
+SRS AS-5 假設同一組目標同時只有一個 rosamta 程序在套用；03 §12「並行與外部修改」要求說明多個 rosamta 同時執行時怎麼處理。
 
 - 會寫入的子指令（套用，包括指定接受 drift；納入管理、修改屬性、停止管理；初始化）在讀取任何設定之前，取得 `<狀態目錄>/lock` 的獨占鎖定，持有到程序結束。取不到時立即回報「另一個 rosamta 程序正在執行」與鎖定檔的路徑，回傳 `1`，不等待。
 - 預覽、摘要、查詢與說明不取得鎖定：鎖定檔可能需要建立，違反預覽與查詢的唯讀要求（FR-PLN-004、FR-QRY-006）。另一個程序正在套用時，預覽看到的是當下的檔案。
 - Linux 與 macOS：經 §6.1 的走訪，以 `openat(O_RDWR | O_CREAT | O_NOFOLLOW, 0600)` 開啟鎖定檔，再呼叫 `flock(LOCK_EX | LOCK_NB)`。不用 `fcntl` 的記錄鎖：同一個程序關閉該檔案的任何一個 fd，`fcntl` 鎖就會釋放。Windows：以共用模式 `0` 和 `OPEN_ALWAYS` 開啟，已被其他程序開啟時以 `ERROR_SHARING_VIOLATION` 失敗（ASM-20）。
 - 程序結束或被終止時，作業系統釋放鎖定，不會留下需要手動刪除的鎖。鎖定檔建立後不刪除：刪除後再建立，兩個程序可能各自鎖住不同的檔案。
-- 初始化時狀態目錄可能還不存在，先依 §5.1 建立狀態目錄，再取得鎖定。
+- 狀態目錄與鎖定檔可能還不存在。只有會寫入的子指令會呼叫 `WriteLock::acquire`；它先依 §5.1 以 `ensure_private_dir` 建立缺少的狀態目錄，再以 `lock` 建立或開啟鎖定檔並取得鎖定。這一步只準備鎖定，其他變更須等鎖定成功後再做。
 
 **停止管理與套用**（§5.13、FR-MAN-025、04 §2）：兩者取得同一個鎖定，不會交錯執行。套用在取得鎖定之後才規劃，不沿用先前預覽的計畫，所以停止管理完成後的套用，一定依新的 manifest 與狀態檔規劃；04 §2 提到的計畫版本檢查不需要另外實作。A5 最後一個情境中，若在套用持有鎖定時執行停止管理，停止管理會因取不到鎖定而失敗，套用依原計畫完成，屬於 04 §5「平台阻止外部操作」的情形。
 
@@ -2807,7 +2811,7 @@ IF-001 的每項操作是 `rosamta` 的一個子指令。預覽、摘要與套�
 | `--delete-modified <路徑>`（可重複）、`--delete-modified-all` | `delete_modified` 加入 `Path` 或 `All` | FR-DRF-014 |
 
 - `--overwrite-all` 與 `--accept-all` 同時出現是參數錯誤。同一個路徑同時被指定覆寫與接受，由 `Planner` 回報 `apply.choice-conflict`（§4.12）。`-all` 與指定路徑的不同處理同時出現時，指定路徑的優先，例如 `--accept-all --overwrite ~/.gitconfig` 只覆寫 `~/.gitconfig`，其他 drift 衝突都接受。
-- `--strict` 可以和其他處理方式一起使用。有 drift 衝突時嚴格模式優先，不套用指定的處理（03 §12 第 1 項）。
+- `--strict` 可以和其他處理方式一起使用。有 drift 衝突時嚴格模式優先，不套用指定的處理（03 §12「嚴格模式與 exit code」）。
 - 互動模式延後（§1.2），所以沒有啟用互動的選項；USE-002 的處理見 §12。
 
 **初始化**：
@@ -2893,7 +2897,7 @@ update     ~/.ssh/config              ssh-config proceed  mode 0644 -> 0600
 +foreground = #c0caf5
 ```
 
-- 內容差異是 unified diff（IF-003），前後各 3 行的上下文。檔名相對於 home，加上 `a/`、`b/`，建立與刪除的一方是 `/dev/null`，所以在 home 執行 `patch -p1` 就能套用。檔案結尾沒有換行時輸出 `\ No newline at end of file`，`patch` 的結果才會逐位元組相同。
+- 內容差異是 unified diff（IF-003），前後各 3 行的上下文。檔名相對於 home，加上 `a/`、`b/`，建立與刪除的一方是 `/dev/null`。含空白、引號或反斜線的標頭路徑以 Git 的 C 字串規則引號表示，讓 `patch` 能辨認完整檔名。擷取未上色的 unified diff 區段後，在 home 以 GNU `patch --binary -p1` 套用；`--binary` 可保留 CRLF。檔案結尾沒有換行時輸出 `\ No newline at end of file`，`patch` 的結果才會逐位元組相同。
 - 任一方不是 UTF-8 或含 NUL 字元時，只輸出 `Binary files a/<路徑> and b/<路徑> differ`。
 - 權限的改變寫在項目的那一行（`mode 0644 -> 0600`），不寫進差異：`patch` 不處理權限。只有權限不同的項目沒有內容差異。
 - 保留的項目也輸出差異，表示指定覆寫或接管時會寫入的內容。
@@ -3097,7 +3101,7 @@ Command 不在 Valente Ch.6 介紹的模式中，名稱取自 GoF。回復快照
 
 | 型別 | 只能由誰建立 | 保證 |
 | --- | --- | --- |
-| `WriteLock` | `WriteLock::acquire`（§4.10） | 會改變檔案的操作都已取得鎖定；預覽與查詢無法寫入（FR-PLN-004、FR-QRY-006） |
+| `WriteLock` | `WriteLock::acquire`（§4.10） | 建立狀態目錄與鎖定檔後才取得鎖定，其他變更都要求鎖定；預覽與查詢不執行鎖定流程（FR-PLN-004、FR-QRY-006） |
 | `Reported`、`Checked<T>` | `Diagnostics::error`（§4.1） | 回傳失敗時至少已記錄一個錯誤 |
 | `TemplateValues` | `PreflightChecker::check_inputs`（§4.5） | 交給範本的值都通過了型別檢查 |
 | `DesiredContent` | `Planner`（§4.12） | 寫入的內容來自預檢時的那一次渲染或讀取（A24） |
@@ -3127,7 +3131,7 @@ Valente 以 conceptual integrity 指系統的一致性：同類的問題以同�
 | 規則 | 範圍與例外 | 檢查方式 |
 | --- | --- | --- |
 | 使用者輸入的問題一律以 `Diagnostic` 回報；`FsError` 只在 core 內部，由使用它的類別轉成自己的代碼；執行錯誤記在 `ApplyReport`，由執行檔轉成診斷（§9.5）。panic 只表示程式本身的錯誤 | 內建資源的錯誤是程式的錯誤，以 panic 處理（§4.2） | review；core 啟用 clippy 的 `unwrap_used` 與 `expect_used`，維持內部不變量的 `expect` 須加 `allow` 並寫出理由 |
-| 所有寫入都是依觀測核對的綁定操作（§6.3）：輸出、狀態檔、manifest、本機設定、來源副本與暫存目錄 | git 以路徑寫入暫存目錄（§4.16）；`ensure_private_dir` 在取得鎖定前建立狀態目錄（§4.10） | 會改變檔案的 `FileSystem` 方法都要求 `&WriteLock`；core 禁用 `std::fs`（§11.3） |
+| 輸出、狀態檔、manifest、本機設定、來源副本與暫存目錄依觀測核對後寫入（§6.3） | git 寫入暫存目錄（§4.16）；取得鎖定須先準備狀態目錄與鎖定檔（§4.10） | 修改輸出、狀態及設定的方法要求 `&WriteLock`；core 禁用 `std::fs`（§11.3） |
 | 前置條件以型別表示（§10.2） | — | 編譯器；建構函式的限制見 §11.3 |
 | 每條規則只寫在一處：Profile 的判定在 `ProfileRule::matches`；覆寫層級在 `ValueResolver`；路徑的正規化在 `path`；位置的比較在 `LocationKey::relation`；§5.11 的判定在 `Planner`；讀取設定的順序在 `ConfigLoader::load_layout`；接受的鍵在 `config::schema`；exit code 在執行檔（§9.7）；JSON 的欄位在 `output::json` | — | review；§11.3 的 module 依賴檢查讓其他 module 無法引用這些規則的內部 |
 | 外部套件與平台 API 只出現在一個 module：TOML 在 `config` 與 `docedit`，MiniJinja 在 `template`，系統呼叫在 platform，參數解析在執行檔的 `cli` | `serde_json` 用在 `state` 的狀態檔與執行檔的 JSON 輸出，兩者的格式互不相關 | 各 crate 的 `Cargo.toml` 只列需要的套件（§3.1）；module 依賴檢查 |
@@ -3181,7 +3185,7 @@ core 另外啟用 `clippy::unwrap_used` 與 `clippy::expect_used`（§11.1）。
 **module 依賴**：core 的 integration test（`rosamta-core/tests/architecture.rs`）讀取 `src/` 的原始碼檢查，隨 `cargo test` 在三平台執行，因此也是每個 commit 的檢查：
 
 - module 之間的引用一律寫成 `crate::<module>`，`super::` 只用在同一個 module 內。測試收集每個 module 引用的 `crate::<module>`，與 §3.2 的「可依賴」比對；出現 `super::super` 也視為失敗。
-- `pub(crate)` 無法限制成只有某個 module 能呼叫，所以測試另外確認三個建構函式的呼叫位置：`TemplateValues` 只在 `preflight`、`DesiredContent` 只在 `plan`、`ApprovedPlan` 只在 `apply`。`#[cfg(test)]` 的單元測試檔不在此限，§5.11 的判定等單元測試要直接建立這些值（§8.1）。依 §4 的介面，這三個型別目前都只有上述的建立者（§4.5、§4.12、§4.14、§4.15）。
+- `pub(crate)` 無法限制成只有某個 module 能呼叫，所以測試另外確認三個建構函式的呼叫位置：`TemplateValues` 只在 `preflight`、`DesiredContent` 只在 `plan`、`ApprovedPlan` 只在 `apply`。`#[cfg(test)]` 的單元測試檔不在此限，§5.11 的判定等單元測試要直接建立這些值（§8.1）。依 §4 的介面，這三個型別都只有上述的建立者（§4.5、§4.12、§4.14、§4.15）。
 
 ### 11.4 發現的問題與處理
 
@@ -3201,7 +3205,7 @@ core 另外啟用 `clippy::unwrap_used` 與 `clippy::expect_used`（§11.1）。
 
 | 編號 | 問題 | 不修改的理由 |
 | --- | --- | --- |
-| A1 | `FileSystem` 把唯讀與寫入的方法放在同一個 trait，`Planner`、`QueryService` 等唯讀的使用者也看得到寫入方法（ISP） | 寫入方法都要求 `&WriteLock`，唯讀的使用者拿不到鎖定，實際上無法呼叫。拆成兩個 trait 後，platform 與 `FaultFs` 都要實作兩個 trait，每個服務的簽名也要選用其中一個，得到的只是文件上的區分 |
+| A1 | `FileSystem` 把唯讀與寫入的方法放在同一個 trait，`Planner`、`QueryService` 等唯讀的使用者也看得到寫入方法（ISP） | 一般寫入方法都要求 `&WriteLock`，唯讀的使用者不取得鎖定。鎖定準備只在 `WriteLock::acquire` 內呼叫，由 §11.3 檢查。拆成兩個 trait 後，platform 與 `FaultFs` 都要實作兩個 trait，每個服務的簽名也要選用其中一個，得到的只是文件上的區分 |
 | A2 | `AnalysisContext` 借用八種資料，`PreflightChecker` 經由它讀取設定與值的內部（耦合面寬、Demeter） | 預檢的本質是檢查整批輸入的一致性，需要看到全部資料。呼叫者只有 `ApplyService`，借用都是唯讀的；依階段拆成不同的 context，會在三個型別重複大部分欄位 |
 | A3 | `RecoveryManager` 同時負責本批的回復與跨批次的殘留清理（SRP） | 兩者都依賴 journal 與批次目錄的格式。拆開後，這個格式就要成為兩個類別之間的公開介面，違反資訊隱藏（§4.13） |
 | A4 | `ManifestService` 持有 `StateStore`，只有 `forget` 使用（內聚） | 三個方法共用 manifest 的修改規則：以 `TomlEditor` 修改、以 `parse_manifest` 確認、依載入時的版本取代（§4.8）。把 `forget` 拆成另一個服務，就要重複這段規則 |
@@ -3235,16 +3239,16 @@ FR-DRF-012 與 B-6 清除的是「已經沒有輸出管理的舊目標」。同�
 
 | 出處 | 項目 | 05 |
 | --- | --- | --- |
-| 03 C3 末段 | `ComparisonMetadata` 的結構 | §5.10 |
-| 03 C4 資料型別末段、04 §2 | 期望內容或執行期參照與 `Executor` 的傳遞契約，原文不進入狀態檔 | §4.12 |
-| 03 S6 末段 | 首次套用失敗時，不撤銷整個初始化 | §4.16 後置條件；與 03 的差異見 §12.4 |
-| 03 §11 | IF-001 只實作交付範圍內的子指令；`DependencyChecker` 在納入依賴檢查時才建立 | §9.1；§1.2 |
-| 03 §12 第 1 項 | 嚴格模式優先，列出每個衝突的名稱與路徑 | §4.12、§4.15 第 8 步、§9.2 |
-| 03 §12 第 2 項 | 接管備份的目錄、命名、保留期限，批次失敗後是否保留 | §5.12、§6.5 |
-| 03 §12 第 3 項 | 比較資料的格式與演算法，以三組案例驗證 | §5.10、§5.11 |
-| 03 §12 第 4 項 | 預檢後的外部修改；多個 rosamta 同時執行 | §6.3、§6.6；§6.7 |
-| 03 §12 第 5 項 | 路徑正規化、大小寫、指向 home 外的連結 | §6.1、§6.2 |
-| 03 §12 第 6 項 | 停止管理的內建輸出的持久化表示 | §5.13 |
+| 03 C3 | `ComparisonMetadata` 的結構 | §5.10 |
+| 03 C3、C4，04 §2 | 期望內容或執行期參照與 `Executor` 的傳遞契約，原文不進入狀態檔 | §4.12 |
+| 03 S6 末段 | 首次套用失敗時，不撤銷整個初始化 | §4.16 後置條件；初始化尚未完成時的撤回見 §4.16 第 5 步 |
+| 03 §11 | IF-001 只實作交付範圍內的子指令；第一版延後依賴檢查 | §9.1；§1.2 |
+| 03 §12「嚴格模式與 exit code」 | 嚴格模式優先，列出每個衝突的名稱與路徑 | §4.12、§4.15 第 8 步、§9.2 |
+| 03 §12「接管備份與回復快照」 | 接管備份的目錄、命名、保留期限，批次失敗後是否保留 | §5.12、§6.5 |
+| 03 §12「兩份比較基準」 | 比較資料的格式與演算法，以三組案例驗證 | §5.10、§5.11 |
+| 03 §12「並行與外部修改」 | 預檢後的外部修改；多個 rosamta 同時執行 | §6.3、§6.6；§6.7 |
+| 03 §12「路徑安全」 | 路徑正規化、大小寫、指向 home 外的連結 | §6.1、§6.2 |
+| 03 §12「停止管理與同位置新輸出」 | 停止管理的內建輸出的持久化表示 | §5.13 |
 | 04 §3.1 | 目標碰撞回報宣告位置；home 範圍；父目錄解析後超出 home | §4.6、§6.1、§6.2 |
 | 04 §3.1 | 實際讀取的來源檔位於來源目錄內 | §4.5、§6.1 |
 | 04 §3.1 | 同一路徑同時被當成一般檔案與目錄 | §4.6、§5.2、§6.2 |
@@ -3295,14 +3299,14 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 
 ### 12.4 與 03、04 不同的設計
 
-類別介面與 03 C1–C4 的差異，已列在 §4 開頭的表格。其他與 03、04 不同的地方：
+§4 開頭列出 03 C1–C4 與詳細介面的對應。本表補充 03、04 的流程對應及細節差異。
 
 | 03、04 | 05 | 理由 |
 | --- | --- | --- |
 | 04 §3.1：來源連結解析後須是一般檔案 | 路徑中的目錄一律不得是連結；範本與原樣複製的來源檔本身也不得是連結（§6.1） | 預檢無法分辨使用者的連結與兩次檢查之間換入的連結。代價是 `~/.config` 是連結的使用者，`target` 要寫實際的位置 |
 | 04 A14、A17：在最後一次重檢後、狀態替換前改動時，不提交過時的紀錄 | 在 `BeforeCommit` 注入時，狀態照常提交，再由完成確認發現不符，回復原狀態（§6.6 第 5 步、§8.5） | 提交與完成確認之間無法排除改動，只能事後發現。最終結果相同：狀態檔是原本的版本，項目不列為完成 |
 | 04 A16 第三列：擷取完成後改回原檔，仍須拒絕副本 | 這個預期依 §6.5 的複製快照成立（§8.5 末段） | 以 hard link 當快照時，改回後副本就是正確的版本；這是不用 hard link 當快照的理由之一 |
-| 03 S6：不宣稱首次套用失敗時撤銷初始化 | 首次套用失敗不撤銷；本機設定寫入失敗時，撤回已移入的遠端來源（§4.16 第 5 步） | 不撤回時，再次初始化會因 FR-INI-009 而失敗，使用者無法直接重試 |
+| 03 S6：初始化的失敗邊界 | 本機設定寫入失敗時，依核對結果安全撤回遠端來源；初始化成功後的首次套用失敗保留初始化結果（§4.16） | 初始化未完成與後續套用失敗分別處理 |
 | 04 §3.1 末段：新輸出與待清除的舊輸出為同一路徑時，先判定舊檔可否清除 | 不產生清除項目，紀錄移交給新輸出（§12.1） | 同一路徑仍有輸出管理，依 drift 的規則處理，被修改的檔案同樣預設保留 |
 | 04 §2：停止管理與套用之間的計畫版本檢查 | 不另外實作，由鎖定排除（§6.7） | 套用取得鎖定後才規劃，不沿用預覽的計畫 |
 | 04 §3.3：回復須還原接管前的連結 | 備份是連結本身的 hard link，回復時改名回原位，不建立新的連結（§7.4） | Windows 標準使用者在未開啟開發人員模式時無法建立連結（ASM-13） |
@@ -3394,7 +3398,7 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 | FR-PLN-001 | `Planner` 為每個項目決定 `Action` | §4.12、§9.4 |
 | FR-PLN-002 | §5.11 的「不變」不寫入；內容或權限不同才寫 | §4.14、§5.11 |
 | FR-PLN-003 | `keep_current` 保留目前的內容，`diff` 輸出差異 | §4.12、§9.4 |
-| FR-PLN-004 | 預覽不取得鎖定，寫入的方法都要求 `&WriteLock` | §4.10、§4.15、§6.7 |
+| FR-PLN-004 | 預覽不準備或取得鎖定，其他檔案變更要求 `&WriteLock` | §4.10、§4.15、§6.7 |
 | FR-PLN-005 | 範本環境不註冊讀寫檔案或執行命令的函式 | §2.3、§4.5 |
 | FR-PLN-006 | 預覽與套用共用 `Planner` 與 `Choices`；前提的解讀見 §12.3 | §4.12、§4.15、§12.3 |
 | FR-PLN-007 | `PreflightChecker` 的三個階段，通過才建立 `ApprovedPlan` | §4.6、§4.15 |
