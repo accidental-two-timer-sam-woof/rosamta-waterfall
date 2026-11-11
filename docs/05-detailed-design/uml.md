@@ -650,6 +650,7 @@ classDiagram
     class RecordChange {
         <<enumeration>>
         Keep
+        Rename
         Remove
         Put
     }
