@@ -1854,7 +1854,7 @@ platform 的實作以 `std::process` 執行 git。Linux 與 macOS 在子程序 e
 - 第一次套用沿用一般套用的預檢、drift 與接管的處理，回報與 exit code 都與一般套用相同（FR-INI-011）。套用失敗不撤銷已完成的初始化（03 S6）。
 - `tags` 以加入的方式合併：FR-INI-008 不允許改變這次沒有指定的值，既有的標籤屬於其中。移除標籤要編輯本機設定。
 - 指定的欄位值只檢查名稱的格式；型別與欄位是否存在，由第一次套用或之後的預覽檢查（§4.6 對所有層級檢查）。
-- 除了 git 的寫入，所有寫入都經由 `FileSystem` 的綁定操作。git 的寫入由持有的暫存目錄限制（§6.3、ASM-22）；Linux 與 macOS 上，clone 前後的搬移與 clone 期間的替換是殘餘的情況，由 `recheck` 發現。
+- 除了 git 的寫入，所有寫入都經由 `FileSystem` 的綁定操作。git 的寫入由持有的暫存目錄限制（§6.3、ASM-22）；Linux 與 macOS 上，clone 前後的搬移與 clone 期間的替換是殘餘的情況：clone 結束後 `recheck` 時路徑仍是改變後的狀態，才會發現；路徑在 `recheck` 之前被還原時發現不了（§6.3）。
 
 **錯誤**：
 
@@ -2407,7 +2407,7 @@ Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保�
 
 - manifest 與本機設定的修改用「取代」，被取代的必須是讀取時的版本。使用者在指令執行期間以編輯器修改了檔案時，指令回報失敗，保留使用者的版本。原本不存在的本機設定用「建立」。
 - 納入管理的來源副本用「建立」。預定位置在最後一次確認後才被占用時，依 §5.4 改用下一個名稱。寫入順序是先建立副本、再修改 manifest；manifest 修改失敗時刪除本次建立的副本。
-- 初始化取得遠端來源時，先 clone 到正式位置所在目錄中的 `.<名稱>.rosamta-tmp.<程序編號>.<序號>/`，確保與正式位置在同一個檔案系統，再以不覆蓋的方式把整個目錄改名到正式位置：Linux 用 `renameat2(RENAME_NOREPLACE)`，macOS 用 `renameatx_np(RENAME_EXCL)`，Windows 用不指定取代的 `MoveFileExW`（ASM-16）。git 的寫入不經由 rosamta 的 handle，改以下列方式限制在暫存目錄內（ASM-22，pilot P7）：Linux 與 macOS 以 `fchdir` 進入持有的暫存目錄後執行 `git clone -- <url> .`；Windows 在 clone 期間持有 home 到暫存目錄的每一層，不含 `FILE_SHARE_DELETE`（ASM-08）。clone 結束後，不論 git 成功與否，依步驟 4 確認路徑仍通往持有的暫存目錄。Linux 與 macOS 上仍有兩種情況：最後一次核對之後，暫存目錄或它的上層被整個搬到 home 外時，clone 寫入搬出去的目錄（同 ASM-06）；clone 進行中路徑上的目錄被換成連結時，git 已改用絕對路徑，之後的寫入可能經由連結落在 home 外。兩者都由 clone 後的核對發現，依 §4.16 回報，不刪除可能在 home 外的檔案。SRS 3.5 節把這兩種情況列入 DC-002 的適用範圍。
+- 初始化取得遠端來源時，先 clone 到正式位置所在目錄中的 `.<名稱>.rosamta-tmp.<程序編號>.<序號>/`，確保與正式位置在同一個檔案系統，再以不覆蓋的方式把整個目錄改名到正式位置：Linux 用 `renameat2(RENAME_NOREPLACE)`，macOS 用 `renameatx_np(RENAME_EXCL)`，Windows 用不指定取代的 `MoveFileExW`（ASM-16）。git 的寫入不經由 rosamta 的 handle，改以下列方式限制在暫存目錄內（ASM-22，pilot P7）：Linux 與 macOS 以 `fchdir` 進入持有的暫存目錄後執行 `git clone -- <url> .`；Windows 在 clone 期間持有 home 到暫存目錄的每一層，不含 `FILE_SHARE_DELETE`（ASM-08）。clone 結束後，不論 git 成功與否，依步驟 4 確認路徑仍通往持有的暫存目錄。Linux 與 macOS 上仍有兩種情況：最後一次核對之後，暫存目錄或它的上層被整個搬到 home 外時，clone 寫入搬出去的目錄（同 ASM-06）；clone 進行中路徑上的目錄被換成連結時，git 已改用絕對路徑，之後的寫入可能經由連結落在 home 外。clone 後核對時路徑仍是改變後的狀態，兩者才會被發現，依 §4.16 回報，不刪除可能在 home 外的檔案。路徑在核對之前被還原時，核對通過，初始化依 git 的結果繼續：目錄被換成連結的期間，git 經由連結寫入的檔案可能留在 home 外，rosamta 無法發現。Linux 與 macOS 無法阻止其他程式替換路徑上的目錄，這個情況不另外處理。SRS 3.5 節把這些情況列入 DC-002 的適用範圍（SRS 1.4 版）。
 
 ### 6.4 檔案的寫入與權限
 
@@ -2626,7 +2626,7 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 
 | 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
 | --- | --- | --- | --- | --- |
-| ASM-22 | 以 `git clone -- <url> .` clone 到工作目錄時，git 寫入工作目錄的實際位置。Linux 與 macOS 以 `fchdir` 進入持有的目錄後，路徑上的目錄被換成連結或其他目錄，不會改變 git 的寫入位置 | git-clone 文件只說明 `<directory>` 是 clone 的目的地，沒有說明如何解析，也沒有說明 clone 期間是否以絕對路徑操作 | 文件沒有保證，依 pilot 的結果。clone 開始後，git 以絕對路徑寫入：clone 進行中路徑上的目錄被換成連結時，之後的寫入可能經由連結落在 home 外；暫存目錄或上層在最後一次核對後被整個搬出 home 時，寫入跟著目錄到 home 外（同 ASM-06）。兩者都由 clone 後的核對發現（§6.3）。本機實驗中，clone 進行中替換上層時，git 因找不到自己的 `.git/config` 而失敗，home 外沒有檔案，但這只是單次觀察，不當作保證。Windows 依 ASM-08 持有每一層，沒有這些情況。pilot 只用 file:// repo，HTTPS 與 SSH 由 06 驗證 | 有條件。git 2.56.0（Windows 為 2.56.0.windows.4）。clone 開始前替換父目錄或上一層：Linux 與 macOS 的換成連結、換成 home 內的其他目錄共 4 個案例，clone 都在持有的目錄，home 外與替代目錄都沒有改變；整個搬出 home 的 2 個案例，clone 寫入搬出去的目錄。6 個案例在 clone 後重新走訪都發現路徑改變。兩個 Windows job 中，6 種替換都被擋下（sharing violation），clone 照常完成。對照組：以路徑交給 git 時，Linux 與 macOS 換成連結的 2 個案例，整個 clone 寫到 home 外 |
+| ASM-22 | 以 `git clone -- <url> .` clone 到工作目錄時，git 寫入工作目錄的實際位置。Linux 與 macOS 以 `fchdir` 進入持有的目錄後，路徑上的目錄被換成連結或其他目錄，不會改變 git 的寫入位置 | git-clone 文件只說明 `<directory>` 是 clone 的目的地，沒有說明如何解析，也沒有說明 clone 期間是否以絕對路徑操作 | 文件沒有保證，依 pilot 的結果。clone 開始後，git 以絕對路徑寫入：clone 進行中路徑上的目錄被換成連結時，之後的寫入可能經由連結落在 home 外；暫存目錄或上層在最後一次核對後被整個搬出 home 時，寫入跟著目錄到 home 外（同 ASM-06）。clone 後核對時路徑仍是改變後的狀態，兩者才會被發現；路徑在核對之前被還原時發現不了（§6.3）。本機實驗中，clone 進行中替換上層時，git 因找不到自己的 `.git/config` 而失敗，home 外沒有檔案，但這只是單次觀察，不當作保證。Windows 依 ASM-08 持有每一層，沒有這些情況。pilot 只用 file:// repo，HTTPS 與 SSH 由 06 驗證 | 有條件。git 2.56.0（Windows 為 2.56.0.windows.4）。clone 開始前替換父目錄或上一層：Linux 與 macOS 的換成連結、換成 home 內的其他目錄共 4 個案例，clone 都在持有的目錄，home 外與替代目錄都沒有改變；整個搬出 home 的 2 個案例，clone 寫入搬出去的目錄。6 個案例在 clone 後重新走訪都發現路徑改變。兩個 Windows job 中，6 種替換都被擋下（sharing violation），clone 照常完成。對照組：以路徑交給 git 時，Linux 與 macOS 換成連結的 2 個案例，整個 clone 寫到 home 外 |
 | ASM-23 | 檔案的內容或屬性改變時，狀態變更時間（Linux、macOS 的 `st_ctime`，Windows 的 `ChangeTime`）跟著更新，包括程式改寫內容後把修改時間設回原值的情況。Linux 與 macOS 沒有設定 `st_ctime` 的系統呼叫 | POSIX `<sys/stat.h>`：`st_ctime` 是最後一次狀態改變的時間；`utimensat` 只能設定存取與修改時間，而且會更新 `st_ctime`。`FILE_BASIC_INFO` 文件：`ChangeTime` 是最後一次改變的時間，`SetFileInformationByHandle` 可以設定它 | 用於 §4.16 撤回前的比較。Windows 上，有 `FILE_WRITE_ATTRIBUTES` 的程式可以把 `ChangeTime` 與修改時間都設回原值，這種修改偵測不到；只有大小不變時才會發生 | 有條件。三平台上，改寫成同樣大小的內容、把修改時間設回原值後，狀態變更時間都改變。Linux 與 macOS 沒有設回的方法；兩個 Windows job 以 `SetFileInformationByHandle` 把 `ChangeTime` 設回原值都成功 |
 
 ### 7.9 文件出處
@@ -3274,12 +3274,12 @@ FR-DRF-012 與 B-6 清除的是「已經沒有輸出管理的舊目標」。同�
 
 ### 12.3 與 SRS 文字的落差
 
-下列三項不是做不到，而是 SRS 的文字與設計之間有落差。DC-002 依審查在 SRS 寫明適用範圍（SRS 1.3 版），USE-002 在 SRS A.3 補註驗收方式（SRS 1.2 版），FR-PLN-006 不修訂 SRS。以下說明 05 的對應與解讀。
+下列三項不是做不到，而是 SRS 的文字與設計之間有落差。DC-002 依審查在 SRS 寫明適用範圍（SRS 1.3、1.4 版），USE-002 在 SRS A.3 補註驗收方式（SRS 1.2 版），FR-PLN-006 不修訂 SRS。以下說明 05 的對應與解讀。
 
 **DC-002 與平台的保護範圍**：04 §3.3 末段要求，平台無法提供所需的保護時，由團隊確認支援條件、失敗行為，以及是否修訂 SRS。05 有三處平台無法再收緊：
 
 - ASM-06：Linux 與 macOS 上，持有目錄 fd 不能阻止其他程序搬移該目錄。外部程序在最後一次檢查後把原目錄整個搬到 home 外時，本批的寫入會短暫出現在搬出去的目錄中，§6.3 的步驟 4 發現後經由同一個 fd 復原。寫入不會落在替代的目錄或連結指向的位置。Windows 由 ASM-08 擋下搬移，沒有這個情況。
-- 初始化的 git clone（ASM-22）：Linux 與 macOS 上，最後一次核對後暫存目錄或上層被搬到 home 外，或 clone 進行中路徑上的目錄被換成連結時，git 寫入的檔案可能在 home 外。clone 後的核對發現，回報失敗，不刪除可能在 home 外的檔案（§4.16、§6.3）。clone 開始前的連結替換不受影響（pilot P7）。Windows 依 ASM-08 持有每一層，沒有這個情況。
+- 初始化的 git clone（ASM-22）：Linux 與 macOS 上，最後一次核對後暫存目錄或上層被搬到 home 外，或 clone 進行中路徑上的目錄被換成連結時，git 寫入的檔案可能在 home 外。clone 後核對時路徑仍是改變後的狀態，才會發現，回報失敗，不刪除可能在 home 外的檔案（§4.16、§6.3）；路徑在核對之前被還原時發現不了，home 外可能留下 git 寫入的檔案。clone 開始前的連結替換不受影響（pilot P7）。Windows 依 ASM-08 持有每一層，沒有這個情況。
 - §6.3 的「剩下的空窗」：Windows 的取代，以及 Linux、macOS 不支援交換式改名的檔案系統，在最後一次核對與實際取代之間有一次系統呼叫的空窗，空窗內的替換或修改會被取代掉。這不改變寫入位置。
 
 DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）沒有外部程序介入，仍可通過。前兩處是 DC-002 在其他程式搬移或替換目錄時的行為，SRS 3.5 節的適用範圍與上述一致；06 依該節與 §8.5 的 A7、A10 設計測試情境。
