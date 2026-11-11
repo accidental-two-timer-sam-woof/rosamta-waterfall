@@ -239,15 +239,15 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | 設定檔編輯 | `manage::ManifestService` 與 `docedit::Editor` 保留 BOM、換行與既有值的 decor。新增屬性的縮排依 toml_edit 預設。 `forget` 依 §5.13 先提交 `forget_pending` |
 | 初始化 | `init::initialize` 先在來源旁的暫存目錄取得 Git 內容，寫入本機設定後以不覆蓋改名發布。若發布失敗會嘗試還原本機設定，保留暫存目錄供檢查。未指定遠端時只建立來源與本機設定，首次套用由遠端初始化呼叫共用套用流程 |
 | 平台檔案介面 | `FileSystem` 的 `inspect`、`children`、`change`、`lock` 與目錄操作由 `SystemFs` 實作。Unix 逐層以 `openat` 開啟，交換式替換並重新核對父目錄，只變更 mode 時以已開啟的檔案描述符操作。Windows 持有父目錄 handle，複製舊檔的 DACL，再以目錄 handle 為基準改名，刪除使用經核對的 handle |
-| 回復與備份 | `recovery::Journal` 依套用記錄反向回復，快照名稱為 `before-<項目序號>`。程序中止或回復失敗後，現有快照保留供使用者檢查。一般檔案接管會留下副本。符號連結接管與回復使用連結本身的硬連結，須在同一檔案系統 |
-| 輸出與測試 | CLI 以 §9.6 的 JSON 外層回傳各服務結果，部份內部資料以 JSON 值承載。 `crates/cli/tests/cli.rs` 驗證實際子程序， `crates/core/tests/architecture.rs` 檢查模組依賴。workspace CI 在三平台建置並執行測試 |
+| 回復與備份 | `recovery::Journal` 依套用記錄反向回復。`targets.json` 記錄快照 `before-<項目序號>` 對應的目標。程序中止或回復失敗後，預覽和套用會提示快照位置。一般檔案接管會留下副本。符號連結接管與回復使用連結本身的硬連結，須在同一檔案系統 |
+| 輸出與測試 | CLI 以 §9.6 的 JSON 外層回傳各服務結果，部分內部資料以 JSON 值承載。 `crates/cli/tests/cli.rs` 驗證實際子程序， `crates/cli/tests/rollback.rs` 用 `FaultFs` 注入目標與狀態寫入失敗， `crates/core/tests/architecture.rs` 檢查模組依賴。workspace CI 測試三平台並建置四種發佈目標 |
 
 實際驗收的差異如下：
 
-- Windows 路徑比較目前以 Unicode 小寫產生路徑鍵，Linux 與 macOS 以原字串比較。檔案系統的大小寫規則、別名與中途置換仍須依 §6 驗收。
+- 絕對路徑可使用 home 的原始位置或解析後的位置。Windows 路徑比較目前以 Unicode 小寫產生路徑鍵，Linux 與 macOS 以原字串比較。檔案系統的大小寫規則、別名與中途置換仍須依 §6 驗收。
 - 清除只作用於一般檔案。Windows 上符號連結以 reparse tag 識別，其他 reparse point 不接管。Windows 私有目錄建立時授權目前使用者與 SYSTEM。目標持有到改名前，釋放 handle 到改名之間仍有 §6.3 所述的空窗，須在標準使用者和不同開發人員模式下驗收。
 - 語法或型別錯誤會附解析器的位置。預檢引用目前以範本路徑與欄位名稱定位，尚未對所有語意錯誤附行、欄及修正提示。CLI 診斷以共用代碼回報各階段失敗。
-- 遠端初始化失敗後只自動移除空的暫存目錄，仍有資料的暫存目錄會保留並附路徑。程序中止後尚無依 §6.5 自動清理暫存檔的流程。
+- Git 子程序在 Unix 離開控制終端，在 Windows 以無主控台的方式啟動。遠端初始化失敗後只自動移除仍是原先觀測且為空的暫存目錄，仍有資料的暫存目錄會保留並附路徑。程序中止後尚無依 §6.5 自動清理暫存檔的流程。
 - `help` 子指令的 `--format` 放在 `help` 前，輸出為文字。一般子指令接受前後兩種位置。
 
 使用者可執行的指令見[第 07 份操作手冊](../07-user-manual/user-manual.md)。實作改變介面、資料格式或行為時，請在同一批提交更新 05 的對應章節及受影響的圖。
@@ -2130,6 +2130,7 @@ width = 40
 - 終端機的設定檔直接寫到程式讀取的位置，與 SRS 3.2.8 的例子相同；已有設定檔的使用者可宣告 `takeover`，或以 `[builtin.*]` 改變目標路徑。shell 的輸出則寫到獨立的檔案，由使用者在自己的啟動檔載入，例如在 `~/.bashrc` 加上 `. ~/.config/shell/rosamta.sh`：`~/.bashrc` 與 PowerShell 的 `$PROFILE` 通常還有使用者自己的內容，完整管理會覆寫它們。
 - `format_version` 是撰寫範本時依據的版本。`powershell` 只使用 Windows PowerShell 5.1 也支援的語法，PowerShell 7 同樣能載入。實作開始時若各程式已有新的穩定版，依新版撰寫範本並更新本表。
 - 每個欄位至少由一個內建範本使用（DATA-002）。`terminal.scrollback` 只有 Alacritty 的範本使用：Ghostty 的捲動上限以位元組計，無法由行數換算。上限 100000 是 Alacritty 接受的最大值。單元測試逐一修改每個欄位的值，確認至少一個內建輸出的內容改變，並逐一確認每個內建範本都有 `program` 與 `format_version`（FR-TPL-002）。
+- Alacritty 的原生分頁快捷鍵只輸出到 macOS，`close_tab` 由 Ghostty 範本提供。Alacritty 範本也會將 `ctrl`、`shift` 等常用修飾鍵轉成 Alacritty 的名稱。[Alacritty 快捷鍵文件](https://alacritty.org/config-alacritty-bindings.html)
 
 ### 5.7 Profile
 

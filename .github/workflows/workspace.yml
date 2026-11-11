@@ -22,3 +22,70 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Test the workspace
         run: cargo test --locked --workspace
+
+  dist:
+    name: Release build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            rustflags: -C target-feature=+crt-static
+          - os: macos-15
+            target: x86_64-apple-darwin
+          - os: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    env:
+      RUST_TARGET: ${{ matrix.target }}
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the release target
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustup target add "$RUST_TARGET"
+      - name: Build the executable
+        shell: bash
+        run: cargo build --locked --release --target "$RUST_TARGET"
+      - name: Check Linux linkage and smoke test
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          binary="target/$RUST_TARGET/release/rosamta"
+          file "$binary"
+          linkage="$(ldd "$binary" 2>&1 || true)"
+          echo "$linkage"
+          grep -Eq 'not a dynamic executable|statically linked' <<<"$linkage"
+          "$binary" --version
+      - name: Check macOS linkage
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          binary="target/$RUST_TARGET/release/rosamta"
+          otool -L "$binary"
+          extra="$(otool -L "$binary" | tail -n +2 | grep -Ev '^[[:space:]]+(/usr/lib/|/System/Library/)' || true)"
+          if [ -n "$extra" ]; then echo "$extra"; exit 1; fi
+          if [ "$(uname -m)" = arm64 ] && [ "$RUST_TARGET" = aarch64-apple-darwin ]; then "$binary" --version; fi
+      - name: Check Windows linkage and smoke test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = "target/$env:RUST_TARGET/release/rosamta.exe"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          $dependencies = & $dumpbin /nologo /dependents $binary
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dependencies
+          if ($dependencies -match '(?i)vcruntime|msvcp|api-ms-win-crt|ucrtbase') { throw 'depends on an external C runtime' }
+          & $binary --version
+      - name: Save executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: rosamta-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/rosamta${{ runner.os == 'Windows' && '.exe' || '' }}
+          if-no-files-found: error
