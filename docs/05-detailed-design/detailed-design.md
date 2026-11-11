@@ -1830,7 +1830,7 @@ platform 的實作以 `std::process` 執行 git。Linux 與 macOS 在子程序 e
 1. 依 `Layout::config_dir` 與 `load_local` 讀取既有的本機設定。來源目錄依序取 `req.source`、本機設定的 `source`、預設位置（§5.1），以 `Layout::with_source` 建立 `Layout`。
 2. 依 §5.2 檢查：三個目錄都不等於 home，彼此的位置鍵沒有 `Same`、`Ancestor` 或 `Descendant` 的關係，路徑中沒有連結。
 3. 準備來源目錄：
-   - 指定了 `repo`：來源目錄的位置不得存在，包括空目錄，否則失敗，不改動任何檔案（FR-INI-009）；空目錄的提示是先刪除它。刪除該位置旁邊殘留的 `.<名稱>.rosamta-tmp.*` 暫存目錄：鎖定保證沒有其他 rosamta 正在使用它們。建立不存在的上層目錄，在同一個目錄以 `CreateDir` 建立暫存目錄，以 `hold_dir` 持有它，到達 `BeforeOperation`（`SourceClone`），呼叫 `clone_into`，以 `HeldDir::recheck` 確認路徑仍通往持有的暫存目錄，以 `list_tree` 記下暫存目錄的清單（第 5 步使用），再以 `MoveDir` 移到正式位置（§6.3），同步點為 `SourceMoveIn`。`recheck` 失敗時，表示 Linux 或 macOS 上其他程式在 clone 前後搬移或替換了路徑上的目錄，暫存目錄與 git 寫入的檔案可能在 home 外：不刪除它們，回報 `init.stale`，說明 git 寫入的檔案可能位於 home 外（SRS 3.5 節 DC-002 的適用範圍）。其他步驟失敗時以 `list_tree` 取得暫存目錄目前的清單，再以 `RemoveTree` 刪除暫存目錄，並刪除本次建立、仍是空的上層目錄，回報 repo 的位址與原因，不建立本機設定（FR-INI-010）。
+   - 指定了 `repo`：來源目錄的位置不得存在，包括空目錄，否則失敗，不改動任何檔案（FR-INI-009）；空目錄的提示是先刪除它。刪除該位置旁邊殘留的 `.<名稱>.rosamta-tmp.*` 暫存目錄：鎖定保證沒有其他 rosamta 正在使用它們。建立不存在的上層目錄，在同一個目錄以 `CreateDir` 建立暫存目錄，以 `hold_dir` 持有它，到達 `BeforeOperation`（`SourceClone`），呼叫 `clone_into`。`clone_into` 回傳後，不論 git 成功與否，先以 `HeldDir::recheck` 確認路徑仍通往持有的暫存目錄；git 成功時再以 `list_tree` 記下暫存目錄的清單（第 5 步使用），以 `MoveDir` 移到正式位置（§6.3），同步點為 `SourceMoveIn`。`recheck` 失敗時，表示 Linux 或 macOS 上其他程式在 clone 前後搬移或替換了路徑上的目錄，暫存目錄與 git 寫入的檔案可能在 home 外：不刪除它們，回報 `init.stale`，說明 git 寫入的檔案可能位於 home 外（SRS 3.5 節 DC-002 的適用範圍）；git 也失敗時，診斷另附 git 的 exit status 與錯誤訊息。git 失敗時也要先核對，因為暫存目錄可能在 clone 期間被搬到 home 外，git 才失敗，這時刪除暫存目錄會刪到 home 外的檔案。`recheck` 通過，而 git 或之後的步驟失敗時，以 `list_tree` 取得暫存目錄目前的清單，再以 `RemoveTree` 刪除暫存目錄，並刪除本次建立、仍是空的上層目錄，回報 repo 的位址與原因，不建立本機設定（FR-INI-010）。
    - 沒有指定 `repo`：來源目錄不存在時建立它；`manifest.toml` 不存在時以 `CreateFile` 建立空的 manifest（FR-INI-002）。既有的檔案不改動。
 4. 合併本機設定（FR-INI-008）：以 `TomlEditor` 解析既有的 `local.toml`（不存在時從空文字開始），只修改這次指定的值：
    - `req.source` 有值時，寫入 `source`，以 `~/` 開頭、以 `/` 分隔。
@@ -1862,9 +1862,9 @@ platform 的實作以 `std::process` 執行 git。Linux 與 macOS 在子程序 e
 | --- | --- |
 | `init.source-exists` | 指定遠端時，來源目錄的位置已存在（FR-INI-009） |
 | `init.layout` | 三個目錄互相包含、等於 home，或路徑中有連結（§5.2） |
-| `init.clone-failed` | git 回報失敗，附 repo 的位址、git 的 exit status 與錯誤訊息（FR-INI-010） |
+| `init.clone-failed` | git 回報失敗，而且 `recheck` 通過，附 repo 的位址、git 的 exit status 與錯誤訊息（FR-INI-010） |
 | `init.git-missing` | 找不到 `git` 執行檔 |
-| `init.stale` | clone 後路徑不再通往持有的暫存目錄（git 寫入的檔案可能位於 home 外，不刪除），或移入時正式位置已被占用（A7） |
+| `init.stale` | clone 結束後，不論 git 成功與否，路徑不再通往持有的暫存目錄（git 寫入的檔案可能位於 home 外，不刪除；git 失敗時另附 git 的 exit status 與錯誤訊息），或移入時正式位置已被占用（A7） |
 | `init.write-failed` | 建立來源目錄、manifest 或本機設定失敗，附作業系統的錯誤 |
 | `init.rollback-kept` | 撤回來源目錄時，其他程式新增或修改了其中的檔案；列出來源目錄的位置與保留的項目（第 5 步） |
 | `init.concurrent-edit` | 本機設定在初始化期間被修改 |
@@ -2406,7 +2406,7 @@ Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保�
 
 - manifest 與本機設定的修改用「取代」，被取代的必須是讀取時的版本。使用者在指令執行期間以編輯器修改了檔案時，指令回報失敗，保留使用者的版本。原本不存在的本機設定用「建立」。
 - 納入管理的來源副本用「建立」。預定位置在最後一次確認後才被占用時，依 §5.4 改用下一個名稱。寫入順序是先建立副本、再修改 manifest；manifest 修改失敗時刪除本次建立的副本。
-- 初始化取得遠端來源時，先 clone 到正式位置所在目錄中的 `.<名稱>.rosamta-tmp.<程序編號>.<序號>/`，確保與正式位置在同一個檔案系統，再以不覆蓋的方式把整個目錄改名到正式位置：Linux 用 `renameat2(RENAME_NOREPLACE)`，macOS 用 `renameatx_np(RENAME_EXCL)`，Windows 用不指定取代的 `MoveFileExW`（ASM-16）。git 的寫入不經由 rosamta 的 handle，改以下列方式限制在暫存目錄內（ASM-22，pilot P7）：Linux 與 macOS 以 `fchdir` 進入持有的暫存目錄後執行 `git clone -- <url> .`；Windows 在 clone 期間持有 home 到暫存目錄的每一層，不含 `FILE_SHARE_DELETE`（ASM-08）。clone 後依步驟 4 確認路徑仍通往持有的暫存目錄。Linux 與 macOS 上仍有兩種情況：最後一次核對之後，暫存目錄或它的上層被整個搬到 home 外時，clone 寫入搬出去的目錄（同 ASM-06）；clone 進行中路徑上的目錄被換成連結時，git 已改用絕對路徑，之後的寫入可能經由連結落在 home 外。兩者都由 clone 後的核對發現，依 §4.16 回報，不刪除可能在 home 外的檔案。SRS 3.5 節把這兩種情況列入 DC-002 的適用範圍。
+- 初始化取得遠端來源時，先 clone 到正式位置所在目錄中的 `.<名稱>.rosamta-tmp.<程序編號>.<序號>/`，確保與正式位置在同一個檔案系統，再以不覆蓋的方式把整個目錄改名到正式位置：Linux 用 `renameat2(RENAME_NOREPLACE)`，macOS 用 `renameatx_np(RENAME_EXCL)`，Windows 用不指定取代的 `MoveFileExW`（ASM-16）。git 的寫入不經由 rosamta 的 handle，改以下列方式限制在暫存目錄內（ASM-22，pilot P7）：Linux 與 macOS 以 `fchdir` 進入持有的暫存目錄後執行 `git clone -- <url> .`；Windows 在 clone 期間持有 home 到暫存目錄的每一層，不含 `FILE_SHARE_DELETE`（ASM-08）。clone 結束後，不論 git 成功與否，依步驟 4 確認路徑仍通往持有的暫存目錄。Linux 與 macOS 上仍有兩種情況：最後一次核對之後，暫存目錄或它的上層被整個搬到 home 外時，clone 寫入搬出去的目錄（同 ASM-06）；clone 進行中路徑上的目錄被換成連結時，git 已改用絕對路徑，之後的寫入可能經由連結落在 home 外。兩者都由 clone 後的核對發現，依 §4.16 回報，不刪除可能在 home 外的檔案。SRS 3.5 節把這兩種情況列入 DC-002 的適用範圍。
 
 ### 6.4 檔案的寫入與權限
 
@@ -2721,6 +2721,7 @@ core 的單元測試不能使用 testkit。testkit 依賴 core；core 的單元�
 | --- | --- | --- | --- |
 | A7 | clone 前，暫存目錄的上層被換成指向 home 外的連結 | `BeforeOperation`（`SourceClone`） | Windows 擋下替換，clone 照常完成；Linux 與 macOS 的 clone 寫入持有的暫存目錄，home 外與替代位置都沒有檔案，`recheck` 發現路徑改變，回報 `init.stale`（ASM-22） |
 | A7 | clone 前，暫存目錄的上層被整個搬到 home 外 | `BeforeOperation`（`SourceClone`） | Windows 擋下；Linux 與 macOS 的 clone 寫入搬出去的目錄，`recheck` 發現，回報 `init.stale`，不刪除 home 外的檔案（SRS DC-002） |
+| A7 | clone 前，暫存目錄的上層被整個搬到 home 外，之後 git 失敗 | `BeforeOperation`（`SourceClone`） | Windows 擋下；Linux 與 macOS 在清理暫存目錄之前 `recheck` 發現，回報 `init.stale` 並附 git 的錯誤，不刪除 home 外的檔案（§4.16） |
 | A7 | 下載成功後、移入前，父目錄被換成指向 home 外的連結 | `BeforeOperation`（`SourceMoveIn`） | 同 A10 的第二列，回報 `init.stale`，不建立本機設定 |
 | A7 | 本機設定寫入失敗、撤回來源目錄之前，其他程式在來源目錄新增或修改檔案 | `FaultFs` 使本機設定的寫入失敗，再於 `BeforeOperation`（`SourceWithdraw`）改動 | 清單不同，來源目錄移回正式位置，回報 `init.rollback-kept`，改動保留 |
 | A7 | 撤回的清單比較通過後、刪除前 | `BeforeOperation`（`SourceRemove`）新增檔案或替換既有檔案 | 新增與替換的項目及其上層目錄保留，其他刪除，回報 `init.rollback-kept` |
