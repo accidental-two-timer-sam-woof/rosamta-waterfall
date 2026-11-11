@@ -4,7 +4,7 @@
 
 ### 1.1 基準文件
 
-需求範圍、優先序與驗收條件以 [SRS](../02-srs/srs.md) 為準。本文件定義[初步設計](../03-preliminary-design/uml.md)與[設計分析](../04-design-analysis/design-analysis.md)的介面、格式與演算法。各階段的對應見 §12。
+本文件依 [SRS](../02-srs/srs.md)、[初步設計](../03-preliminary-design/uml.md)與[設計分析](../04-design-analysis/design-analysis.md)撰寫。需求範圍、優先序與驗收條件以 SRS 為準（04 §1）。03 的類別與循序圖、04 的規則與驗證情境，在本文件中細化為介面、格式與演算法；與兩者不同的地方，會在相關章節說明原因。
 
 ### 1.2 第一版範圍
 
@@ -30,7 +30,7 @@
 | FR-QRY-005 | 納入 | 與預覽共用 `Planner`，只是不輸出內容差異 |
 | FR-INI-003 | 納入 | 04 §2 已有未指定遠端時不執行首次套用的流程，指定遠端時沿用 |
 | FR-INI-005 | 納入 | 初始化本來就要記錄來源目錄的位置，後續指令才不必再指定（04 §2） |
-| PERF-001 | 納入 | 作為狀態檔與比較基準（§5）的設計目標，驗收時量測 |
+| PERF-001 | 納入 | 作為狀態檔與比較基準（§5）的設計目標，並在 06 量測 |
 | USE-004 | 納入 | `PreflightChecker` 本來就在寫入前檢查整批計畫（04 §2），改為收集所有錯誤後再回報 |
 | SEC-003 | 納入 | 接管備份本來就要限制存取（04 §3.3），保留原權限只多一步 |
 | MNT-002 | 納入 | 第一版沒有舊版可比較。第一版建立回歸測試用的設定集，之後的 minor 版本依此檢查 |
@@ -48,13 +48,13 @@
 | FR-MAN-014（optional） | 延後 | 須逐一支援各種輸出格式的解析與局部合併 |
 | FR-INI-007（optional） | 延後 | 屬於互動模式，理由同 FR-MAN-022 |
 
-互動模式與依賴檢查延後，第一版不建立這兩項功能的服務或介面（03 §11、04 §6）。
+延後互動模式後，04 §6 的「非嚴格模式的互動」不再適用；03 §11 提到的 `DependencyChecker` 也不建立。
 
 延後的需求依 SRS 附錄 A.3 的規定，記錄在 A.3 與修訂紀錄（SRS 1.2 版）。USE-002 的驗收條件以「啟用互動」為前提，延後互動模式後如何滿足，見 §12。
 
 ## 2. 技術選擇
 
-本節依 04 §4 的三項選擇，分別寫出比較、定案與驗證條件。§2.2、§2.3 的表格記錄 2026-11-09 在 Linux（Arch、rustc 1.99.1）的探查。可重跑的 pilot 測試 P4、P5 位於 `prototypes/pilot/`，跨平台結果見 §7.1。
+本節依 04 §4 的三項選擇，分別寫出比較、定案與驗證條件。§2.2、§2.3 的驗證結果來自一次性探查：2026-11-09 在 Linux（Arch、rustc 1.99.1）執行，只涵蓋下表列出的案例。這些案例會整理成可重跑的 pilot 測試，放在 `prototypes/pilot/`，並在三平台的 CI 上執行。
 
 ### 2.1 實作語言、工具鏈與發佈
 
@@ -66,7 +66,7 @@
 | Linux | `x86_64-unknown-linux-musl`，靜態連結 | 不依賴發行版的 glibc 版本（DC-004） |
 | Windows | `x86_64-pc-windows-msvc`，以 `-C target-feature=+crt-static` 靜態連結 C runtime | 不需要另外安裝 Visual C++ 可轉散發套件（DC-004） |
 | macOS | `x86_64-apple-darwin` 與 `aarch64-apple-darwin` | 只依賴每台 macOS 都有的系統函式庫 |
-| 發佈 | CI 在三平台的 matrix 中建置，每個平台、每種架構一個執行檔 | DC-004。驗收須指定正式支援的平台版本（PORT-001） |
+| 發佈 | CI 在三平台的 matrix 中建置，每個平台、每種架構一個執行檔 | DC-004。正式支援的平台版本由 06 決定（PORT-001） |
 | git | 呼叫系統上的 `git` 執行檔 | DC-004 允許依賴 git；SSH 沿用使用者既有的金鑰與設定（AS-4、IF-012） |
 
 git 的另外兩個選項：git2 須連結 libgit2，SSH 與 HTTPS 再分別依賴 libssh2 與 OpenSSL，難以在三平台都做成單一執行檔；gix 是純 Rust 實作，但 SSH 傳輸同樣要呼叫外部的 `ssh`。兩者都沒有比直接呼叫 `git` 更少依賴，因此不採用。
@@ -76,7 +76,7 @@ git 的另外兩個選項：git2 須連結 libgit2，SSH 與 HTTPS 再分別依�
 驗證條件（04 §4 第 3 列）：
 
 - 單檔替換、符號連結接管與回復：pilot P1–P3 在三平台以一般使用者權限執行。
-- 單一執行檔：pilot 的 CI 為三平台建置原型，以 `ldd`、`otool -L`、`dumpbin /dependents` 檢查動態依賴（ASM-14）。驗收須另以首版成品在只安裝作業系統與 git 的乾淨環境執行。
+- 單一執行檔：pilot 的 CI 為三平台建置執行檔，以 `ldd`、`otool -L`、`dumpbin /dependents` 檢查動態依賴，並在只安裝作業系統與 git 的環境執行。
 
 ### 2.2 設定格式與保留格式的編輯
 
@@ -168,7 +168,7 @@ USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱
 
 外部 crate 一律以 `=` 鎖定版本。toml_edit、minijinja、rustix、windows-sys 沿用 pilot 驗證過的版本；其餘在實作開始時鎖定，升級時以 MNT-002 的回歸設定集檢查。
 
-依賴方向是 `rosamta` → `rosamta-platform` → `rosamta-core`，執行檔也直接使用 core。trait 定義在 core，實作放在 platform，也就是依賴反轉：core 的服務只認得 trait，可依 §8 在測試中把 platform 的實作換成 testkit 的實作，不必修改 core。
+依賴方向是 `rosamta` → `rosamta-platform` → `rosamta-core`，執行檔也直接使用 core。trait 定義在 core，實作放在 platform，也就是依賴反轉：core 的服務只認得 trait，§8 與 06 可以把 platform 的實作換成 testkit 的實作，不必修改 core。
 
 不採用「單一 crate 加 `#[cfg]`」，理由有二：
 
@@ -205,11 +205,11 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | 3 | `query` | `QueryService`、`OutputSummary`、`OutputListing`、`OutputDescription`、`ResolvedValueDescription` | 引用、輸出與欄位值的查詢 | 第 0 層、`config`、`resolve`、`template` |
 | 3 | `init` | `InitializationService`、`GitClient`、`InitializationRequest`、`InitializationResult` | 初始化 | 第 0 層、`config`、`docedit`、`apply` |
 
-03 C4 的服務關係在 module 層級細化如下：
+與 03 C4 不同的依賴：
 
-- `ConfigLoader` 經由 `FileSystem` 讀取來源目錄，理由見 §3.1。
+- `ConfigLoader` 經由 `FileSystem` 讀取來源目錄，理由見 §3.1。C4 只畫出 `Planner`、`Executor` 等對 `FileSystem` 的依賴。
 - `PreflightChecker` 使用 `template` 的靜態引用，在渲染前找出拼錯的欄位（§2.3）。
-- `QueryService` 使用 `template` 的靜態引用回答引用查詢。這項依賴對應 03 C4 的來源載入及 04 §2 的範本引用查詢。
+- `QueryService` 使用 `template` 的靜態引用回答引用查詢。04 §2 已要求查詢共用範本的引用資訊，C4 沒有畫出。
 - `ManifestService` 使用 `config` 取得內建輸出的名稱，使用 `docedit` 修改設定檔。C4 只畫出 `StateStore` 與 `FileSystem`。
 - 摘要（FR-QRY-005）是 `ApplyService` 的一種模式，不屬於 `QueryService`，因為它與預覽共用 `Planner`（§1.2）。
 
@@ -233,27 +233,27 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 
 介面以 Rust 簽名表示，省略 derive、私有欄位與 `pub(crate)` 的項目。生命週期 `'a` 表示服務借用呼叫端建立的依賴（§8.1）。實作時可以調整名稱，但型別表達的限制必須保留，例如「先取得鎖定才能修改設定檔」。
 
-03 C1–C4 的概念介面與本節的對應：
+與 03 不同的地方：
 
 | 03 | 本節 | 理由 |
 | --- | --- | --- |
-| C1 `FieldDecl` 與使用者欄位設定 | `FieldDecl` 與 `Assignment` | 欄位宣告含型別、必填與預設值；各層級的設定值另記錄來源（§5.5–§5.8） |
+| C1 `Field` 同時有宣告與值 | 分成欄位宣告 `FieldDecl` 與設定值 `Assignment` | 值來自四個層級的不同檔案（§5.5–§5.8），不屬於模組的宣告 |
 | C1 `sourceKind` 與 `sourcePath` | 一個 enum `SourceSpec` | 範本與原樣複製只能選一種，以型別排除兩者都有或都沒有的情況 |
 | C1 `Template` | 來源 `TemplateRef` 與中繼資料 `TemplateMeta` | 中繼資料寫在範本裡（§5.9），讀到範本才知道 |
-| C2 `ResolvedValues` | `Resolved` 同時保存未檢查的 `RawValue` 與來源，`conflicted` 另記同層衝突 | `PreflightChecker` 驗證後才產生 `TemplateValues`，供範本使用（04 §2） |
+| C2 `ResolvedValues.values` 為 `FieldValue` | 存未檢查的 `RawValue`，檢查後才轉成 `TemplateValues` | 04 §2 把型別檢查交給 `PreflightChecker`；以型別保證未通過檢查的值不會進入範本 |
 | C4 `ConfigLoader.load()` | `load_local`、`load_layout` 與 `load` | 來源目錄的位置記在本機設定（§5.1），必須先讀本機設定 |
-| C4 `PreflightChecker` | `check_inputs`、`check_targets`、`check_plan`，分別接收各階段的資料 | USE-004 要求欄位值有錯時仍找出目標碰撞，碰撞檢查不可等到渲染之後 |
-| C4 `QueryService::list_outputs` | 與其他查詢共用已載入的設定及 Profile 判定 | FR-MAN-026 的列出輸出是唯讀操作 |
+| C4 `PreflightChecker.validate(context, optionalPlan)` | `check_inputs`、`check_targets`、`check_plan` 三個階段 | 三個階段需要的資料不同。USE-004 要求欄位值有錯時仍找出目標碰撞，碰撞的檢查因此不能等到渲染之後 |
+| C4 `QueryService` | 加上 `list_outputs` | FR-MAN-026 的列出輸出是唯讀的，與其他查詢共用 Profile 判定 |
 | C4 管理方法的參數 | 加上 `&WriteLock`；`add` 改收 `AddRequest` | 以型別確保修改前已取得鎖定（§6.7）；納入時可以指定輸出名稱 |
-| C4 各服務的診斷 | 以 `&mut Diagnostics` 收集（§4.1） | 錯誤與警告走同一條路，USE-004 才能一次列出全部 |
-| C3 `PlanItem` | 動作與處理方式為 enum；細化 `observation`、`desired` 與紀錄變更（§4.12） | 依觀測核對並寫入既有的期望內容，以型別表達保留原因與紀錄更新 |
-| C3 `ApplyReport` | `outcome()`、`failure`、`recovery`（§4.14） | core 計算批次結果；CLI 依 §9.7 決定 exit code |
-| C4 `Planner.targets` 與 `Planner.plan` | `TargetSet` 只含路徑資訊；`PlanInput` 提供已核對的規劃輸入 | 目標碰撞須在渲染前檢查（§4.6） |
-| C4 的 `FileSystem.prepare`、`Prepared.execute`、`Executed.confirm` | `prepare` 接收鎖定及具體的 `FsOp`；`confirm` 回傳 `OpOutcome` | 同步點落在各次呼叫之間，備份與快照也沿用同一操作契約（§4.10、§8.2） |
-| C4 `RecoveryManager` | `begin` 接收狀態基準，`capture` 接收觀測，`finish` 結束成功批次；另有 `record`、`temp_name`、`clean_stale` | 快照要依觀測核對（A16）；回復要知道本批做過的每個操作 |
-| C4 `StateStore.commit(base, newState)` | `commit(lock, base, new, temp)` | 被取代的必須是載入的版本（A23） |
-| C4 `ApplyService` 的 `preview`、`apply` 與 `Executor.execute` | 只有 `apply` 要求 `&WriteLock`；`execute` 要求 `ApprovedPlan` | 預覽唯讀；只執行通過檢查的計畫 |
-| C4 `GitClient.clone_into(url, heldDir)` | `clone_into(url, dest)`，`dest` 由持有的目錄衍生 | 暫存目錄由 `FileSystem` 建立，才能核對身分（§6.3） |
+| C4 回傳 `Diagnostics` | 以 `&mut Diagnostics` 收集（§4.1） | 錯誤與警告走同一條路，USE-004 才能一次列出全部 |
+| C3 `PlanItem` 的字串成員 | enum，加上觀測、期望內容與紀錄的變更（§4.12） | 執行時依觀測核對，以期望內容寫入；03 C3 末段要求補齊這個傳遞契約 |
+| C3 `ApplyReport.exitCode` | `outcome()`，exit code 由 §9.7 對應 | core 不決定 exit code，與 §4.1 一致 |
+| C4 `Planner.build(config, values, state)` | `targets` 與 `plan` | 目標碰撞須在渲染前檢查（§4.6） |
+| C4 `FileSystem` 的 `inspect`、`backup`、`applyAtomically` | `inspect` 與三次呼叫的綁定操作 `prepare`、`execute`、`confirm` | 同步點須落在核對與系統呼叫之間（§8.2）；備份與快照也是綁定的操作 |
+| C4 `RecoveryManager` 的 `begin()`、`capture(path)`、`commit()` | `begin` 接收狀態的基準，`capture` 接收觀測，`commit` 改名為 `finish`；加上 `record`、`temp_name`、`clean_stale` | 快照要依觀測核對（A16）；回復要知道本批做過的每個操作 |
+| C4 `StateStore.saveAtomically(state)` | `commit(lock, base, new, temp)` | 被取代的必須是載入的版本（A23） |
+| C4 `ApplyService.run(request)`、`Executor.execute(plan)` | `preview` 與 `apply`；`execute` 只接收 `ApprovedPlan` | 預覽沒有鎖定，也就無法寫入；以型別確保只執行通過檢查的計畫 |
+| C4 `GitClient.cloneToStaging(url)` | `clone_into(url, dest)` | 暫存目錄由 `FileSystem` 建立，才能核對身分（§6.3） |
 
 ### 4.1 共通約定
 
@@ -634,11 +634,7 @@ pub mod schema {
 - 有任何錯誤時 `is_complete()` 為 `false`。套用與查詢依此決定是否繼續（§4.6、§4.9）。
 - `target` 與 `source` 只檢查語法（`RawPath::parse`），三個平台的 `target` 都檢查。展開要用到目前主機的環境變數，由預檢處理（§4.6）。
 
-**FR-MAN-004 的重複輸出診斷**：toml_edit 仍負責正式解析。manifest 無法解析時，以補充掃描找出重複的輸出宣告。掃描只建立名稱與來源位置的索引，結果不用於合併設定、產生計畫或寫入。做法如下：
-
-1. 依 TOML 的詞法切分表格標頭、鍵與指定值。略過註解，辨識基本與字面字串、多行字串及逸出，追蹤陣列與 inline table 的括號，避免把值中的 `[outputs.x]` 認成表格。以同一套 TOML 鍵規則解碼每個路徑元件，帶引號的點留在同一個元件；記錄名稱在原檔的行與欄。
-2. 依目前表格與 inline table 的範圍組成完整鍵路徑，對 `outputs` 底下的名稱分組。顯式表格如 `[outputs.same]`、`[outputs . "same"]`，以及指定整個輸出值的鍵如 `outputs.same = { … }`，依解碼後的名稱識別。以不同的點分屬性填入同一個輸出（如 `outputs.same.copy`、`outputs.same.target.linux`）只算一個定義。依 TOML 的表格定義規則區分可補上顯式標頭的隱含父表格、已由點分鍵定義的表格與已封閉的 inline table，只有重複定義輸出本身才納入這項診斷。
-3. 保留正式解析器回報的重複位置與第一處宣告（可重解析第二處前的有效前綴補足）。以補充掃描加入其他已確認的位置，去除重複的診斷位置。宣告重複時繼續掃描至檔尾，不因單一名稱已重複而停止。每個重複名稱回報一次 `config.duplicate`，位置含第一次及其後每一處宣告，按原檔順序列出。可辨識的其他 TOML 語法問題仍用原解析診斷；掃描遇到無法可靠定位的語法時停止，保留原解析錯誤。一般重複屬性鍵或其他 TOML 語法錯誤沿用正式解析器的診斷。
+**FR-MAN-004 的第一處**：TOML 不允許重複的表格與鍵，toml_edit 在遇到第二處時回報語法錯誤。`ConfigLoader` 取出錯誤中的鍵名，把檔案截到第二處所在行之前再解析一次。截斷的部分在第一個錯誤之前，所以仍是合法的 TOML，從中可以找到第一處的位置。兩處都列在診斷中。第二處在同一行內（例如 inline table 中的重複鍵）時，兩處都指向這一行。
 
 **錯誤**：
 
@@ -647,7 +643,7 @@ pub mod schema {
 | `config.read-failed` | 讀取失敗，附作業系統的錯誤；或檔案、路徑中有連結（§6.1） |
 | `config.not-utf8` | 無法以 UTF-8 解碼，指出所在的行 |
 | `config.syntax` | TOML 語法錯誤 |
-| `config.duplicate` | 重複的輸出、表格或鍵，列出每一處。重複輸出名稱另依上述掃描補足所有宣告位置（FR-MAN-004） |
+| `config.duplicate` | 重複的輸出、表格或鍵，列出每一處（FR-MAN-004） |
 | `config.unknown-key` | 不認得的鍵，列出該位置可用的鍵（FR-MAN-029） |
 | `config.invalid-value` | 型別錯誤、名稱格式不符、`permissions` 超出範圍、`target` 語法錯誤等 |
 | `config.missing-key` | 缺少必要的鍵，例如 `[outputs.*]` 沒有 `target`，欄位宣告沒有 `type` |
@@ -659,7 +655,7 @@ pub mod schema {
 | `config.invalid-field-decl` | 欄位宣告不合理：`options` 為空或重複、`min` 大於 `max`、`min`/`max` 用在不適用的型別等 |
 | `config.missing-manifest` | 來源目錄沒有 `manifest.toml` |
 
-**隱藏的設計決定**：設定檔使用 TOML 與 toml_edit，其他 module 只看到 `RawValue`、`Located` 等本 module 的型別；BOM、換行與行號的對應；逐表格檢查的方式；找出重複輸出宣告位置的方式；內建資源的嵌入方式與合併演算法。
+**隱藏的設計決定**：設定檔使用 TOML 與 toml_edit，其他 module 只看到 `RawValue`、`Located` 等本 module 的型別；BOM、換行與行號的對應；逐表格檢查的方式；找出重複的第一處的方法；內建資源的嵌入方式與合併演算法。
 
 ### 4.4 ValueResolver
 
@@ -700,7 +696,7 @@ impl ResolvedValues {
 }
 ```
 
-C2 的 `Resolved` 同時包含值與來源。這裡另保留被較高層級取代的來源，供欄位查詢（§4.9）。
+C2 的 `values` 與 `provenance` 兩個 map 合併成一個：值與來源一定同時存在。
 
 **前置條件**：`config` 與 `local` 由 `ConfigLoader` 產生。`config` 不完整時仍可呼叫，結果只涵蓋讀到的部分。
 
@@ -1236,7 +1232,7 @@ pub trait Executed { fn confirm(self: Box<Self>) -> Result<OpOutcome, FsError>; 
 pub trait LockGuard {}
 ```
 
-修改輸出、狀態及設定的方法要求 `&WriteLock`。建立程式私有目錄的 `ensure_private_dir` 與取得鎖定的 `lock` 不要求預先持有鎖定，因為 `WriteLock::acquire` 必須先準備狀態目錄與其中的鎖定檔（§6.7）。唯讀指令不進入鎖定或目錄準備流程（FR-PLN-004、FR-QRY-006）。
+會改變檔案的方法都要求 `&WriteLock`，所以不取得鎖定的預覽與查詢無法寫入（FR-PLN-004、FR-QRY-006），由型別保證，不必靠 review。`ensure_private_dir` 是唯一的例外：取得鎖定之前，必須先有放鎖定檔的狀態目錄（§6.7）。它只建立 rosamta 自己的目錄，不碰任何輸出。
 
 **綁定的操作**：每個操作分成三次呼叫，對應 §6.3 的步驟。core 在呼叫之間到達同步點（§8.2）：
 
@@ -1539,9 +1535,9 @@ impl DesiredContent {
 }
 ```
 
-C3 的 `action`、`disposition` 在本節以 enum 表示，保留原因隨 `Retain` 保存。每個 enum 值有固定的字串，供 IF-004 使用（MNT-003）。
+C3 以字串表示的 `action`、`disposition`、`reason` 改成 enum，`reason` 併入 `Retain`：保留的項目一定有原因，其他項目沒有。每個 enum 值有固定的字串，供 IF-004 使用（MNT-003）。
 
-**期望內容與 Executor 的傳遞契約**（03 C3、04 §2）：
+**期望內容與 Executor 的傳遞契約**（03 C3 末段、04 §2）：
 
 - 執行期參照就是 `DesiredContent`：規劃時把渲染結果或原樣複製來源的位元組放進記憶體，同時計算 SHA-256。`DesiredContent` 的建構函式是 `pub(crate)`，core 中只有 `Planner` 呼叫它（§11.3 的測試檢查），所以內容一定來自預檢時的那一次讀取或渲染。
 - `Executor` 只寫入 `desired.bytes()`，不讀取來源、不渲染（A24）。寫入後以 `OpOutcome::written` 核對 `metadata().sha256`；不同時是執行錯誤（§4.14）。內容無法取得的情況因此只剩寫入途中損毀，§8.3 以 `FaultFs` 注入。
@@ -1563,7 +1559,7 @@ C3 的 `action`、`disposition` 在本節以 enum 表示，保留原因隨 `Reta
   - 比對到的紀錄帶有 `forget_pending` 時一律 `Retain(ForgetPending)`。
   - 比對到的紀錄名稱與本輸出不同時，依上述規則得到 `RecordChange::Keep` 的項目改為 `RecordChange::Rename`，保留的項目除外；`Put` 本來就以本輸出的名稱寫入。所以輸出改名而路徑與內容都沒變時（§5.11 第 3 列、`create-only` 的目標已存在），紀錄也改成新名稱。`Rename` 的項目只更新紀錄，結果為完成，與其他預定完成的項目一樣在提交前重檢（§6.6 第 3 步）。保留的項目依 FR-APL-009 不改紀錄，名稱維持舊的，直到之後某次套用不再保留它；`forget` 因此另外以位置鍵找紀錄（§4.8）。
 - 沒有被啟用輸出比對到的紀錄，各產生一個清除項目，依 §5.11 的清除表。觀測遇到 `LinkInPath` 時為 `Retain(LocationUnconfirmed)`；位於保留位置時為 `Retain(Reserved)`；已修改而 `choices` 指定刪除時為 `Resolve(Delete)`。
-- 嚴格模式：drift 衝突一律為 `Retain(DriftConflict)`，不套用 `choices`（03 §12「嚴格模式與 exit code」），`strict_blocked()` 為 `true`。
+- 嚴格模式：drift 衝突一律為 `Retain(DriftConflict)`，不套用 `choices`（03 §12 第 1 項），`strict_blocked()` 為 `true`。
 - `Selector::Path` 以位置鍵與項目比較。沒有比對到任何 drift 衝突（`drift`）或已修改的舊輸出（`delete_modified`）時，回報警告 `apply.choice-unmatched`。同一個項目同時被指定覆寫與接受時，回報錯誤 `apply.choice-conflict`；`All` 與 `Path` 都指定時，`Path` 優先。
 - 順序：先列清除項目，再列啟用輸出，各自依 `target` 排序。清除在前，舊輸出刪除後空出的路徑才能給新輸出使用。新目標的某一層上層是本批要刪除的舊輸出時，該項目的觀測改為「從那一層起不存在」；上層是其他非目錄的項目（`blocker`）時，`check_plan` 回報 `preflight.unsupported-type`。
 - `Planner` 只使用 `FileSystem` 的唯讀方法。
@@ -1594,7 +1590,7 @@ impl<'a> RecoveryManager<'a> {
     /// 記下一個已生效的操作，以及回復它需要的資料。
     pub fn record(&mut self, done: Done);
     pub fn rollback(self, diags: &mut Diagnostics) -> RecoveryReport;
-    /// 批次成功：依 journal 清理暫存檔，刪除 txn/<批次編號>/（C4 的 finish）。
+    /// 批次成功：依 journal 清理暫存檔，刪除 txn/<批次編號>/（C4 的 commit）。
     pub fn finish(self, diags: &mut Diagnostics);
 
     /// 取得鎖定後、規劃前，清理殘留的批次目錄（§6.5）。由執行檔呼叫。
@@ -1699,7 +1695,7 @@ pub enum ExecErrorKind {
 }
 ```
 
-依 C3 的分工，core 的 `outcome()` 計算批次結果；§9.7 將 `Completed`、`Partial`、`Failed` 對應到 `0`、`2`、`1`。批次在第一個執行錯誤就停止（§6.6），原始錯誤記在 `failure`，各項回復結果記在 `recovery`。
+C3 的 `ApplyReport.exitCode` 改為 `outcome()`：core 不決定 exit code，§9.7 把 `Completed`、`Partial`、`Failed` 對應到 `0`、`2`、`1`。C3 的 `errors` 與 `rollbackFailures` 分別是 `failure` 與 `recovery`；批次在第一個錯誤就停止（§6.6），所以原始錯誤只有一個。
 
 **每個項目的操作**（§6.6 步驟 2）：
 
@@ -1754,7 +1750,7 @@ pub struct ApplyRequest {
 }
 ```
 
-C4 的 `preview` 與 `apply` 分開，只有套用要求 `&WriteLock`，預覽因此無法寫入（§4.10）。`started_at` 由呼叫端傳入，core 不讀取系統時間，測試可以指定（§8.1）。
+C4 的 `run(request)` 分成 `preview` 與 `apply`：只有套用要求 `&WriteLock`，預覽因此無法寫入（§4.10）。`started_at` 由呼叫端傳入，core 不讀取系統時間，測試可以指定（§8.1）。
 
 **流程**：兩個方法共用第 1–8 步：
 
@@ -1765,7 +1761,7 @@ C4 的 `preview` 與 `apply` 分開，只有套用要求 `&WriteLock`，預覽�
 5. `Planner::targets`。
 6. `check_inputs` 與 `check_targets` 都執行（§4.6）。`config.is_complete()` 為 `false`、或任一階段失敗時，到此結束，回傳 `Err`。
 7. `Planner::plan`，再 `check_plan`。
-8. 模式檢查：`plan.strict_blocked()` 時，對每個 drift 衝突回報錯誤 `apply.strict-conflict`，附輸出名稱與目標路徑（03 §12「嚴格模式與 exit code」）。
+8. 模式檢查：`plan.strict_blocked()` 時，對每個 drift 衝突回報錯誤 `apply.strict-conflict`，附輸出名稱與目標路徑（03 §12 第 1 項）。
 
 `preview` 在第 7 步後回傳計畫；第 8 步只在套用時阻擋，預覽照常回傳計畫，並在計畫中標出嚴格模式將不寫入任何輸出（FR-DRF-003）。`apply` 在第 8 步通過後到達 `AfterPreflight`，建立 `ApprovedPlan`，交給 `Executor::execute`，回傳它的回報。
 
@@ -1825,7 +1821,7 @@ pub struct InitializationResult {
 }
 ```
 
-C4 的 `GitClient.clone_into` 接收從持有目錄衍生的 `dest`。暫存目錄由 `InitializationService` 經由 `FileSystem` 建立並持有，才能依 §6.3 記下身分、在 clone 期間限制 git 的寫入位置，並在 clone 後核對；`GitClient` 只執行 git。
+C4 的 `GitClient.cloneToStaging(url)` 改成 `clone_into(url, dest)`：暫存目錄由 `InitializationService` 經由 `FileSystem` 建立並持有，才能依 §6.3 記下身分、在 clone 期間限制 git 的寫入位置，並在 clone 後核對；`GitClient` 只執行 git。
 
 platform 的實作以 `std::process` 執行 git。Linux 與 macOS 在子程序 exec 之前以 `pre_exec` 呼叫 `fchdir`，進入 `WorkDir::Fd` 的目錄，再執行 `git clone -- <url> .`：git 以工作目錄的實際位置解析 `.`，clone 開始前路徑上的目錄被換成連結，git 仍寫入持有的目錄（ASM-22）。Windows 沒有以 handle 指定工作目錄的方式，執行 `git clone -- <url> <dest>`，由 `HeldDir` 在 clone 期間持有 home 到暫存目錄的每一層，替換被擋下（ASM-08）。`--` 避免以 `-` 開頭的位址被當成選項；標準輸入接到空裝置，設定 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never` 與 `SSH_ASKPASS_REQUIRE=never`，git 需要帳號密碼時直接失敗，不等待輸入，也不開啟登入視窗（FR-INI-006、§9.8）。SSH 使用使用者既有的金鑰與設定（AS-4）。
 
@@ -2237,7 +2233,7 @@ SEC-001：狀態檔只有名稱、路徑、檔案編號、權限位元與 SHA-25
 
 ### 5.11 比較基準與判定
 
-本節是 03 C3 兩份基準的演算法，以 03 §12「兩份比較基準」的三組案例驗證。以下 C 表示目標現況的比較資料，N 表示本次的期望，O、D 分別是紀錄中的實際基準與期望基準。C 是否含權限，依本次輸出的宣告決定（§5.10）。
+本節是 03 C3 兩份基準的演算法，以 03 §12 第 3 項的三組案例驗證。以下 C 表示目標現況的比較資料，N 表示本次的期望，O、D 分別是紀錄中的實際基準與期望基準。C 是否含權限，依本次輸出的宣告決定（§5.10）。
 
 - **C 符合 N**：`sha256` 相同；N 有 `mode` 時，目前的權限也與它相同。
 - **外部修改**：C 與 O 的 `sha256` 不同，或 O 有 `mode` 而目前的權限與它不同。O 沒有 `mode` 時不比較權限，宣告權限之前的紀錄因此不會被當成 drift。
@@ -2287,7 +2283,7 @@ SEC-001：狀態檔只有名稱、路徑、檔案編號、權限位元與 SHA-25
 
 ### 5.12 接管備份
 
-03 §12「接管備份與回復快照」的定案：
+03 §12 第 2 項的定案：
 
 - 位置：`<狀態目錄>/backups/<批次編號>/<目標在 home 內的相對路徑>`，例如 `~/.local/state/rosamta/backups/20261109T061530Z/.config/ghostty/config`。沿用目標的相對路徑，使用者不必查表就能找到原檔。批次編號已唯一（§5.1），同一批次內兩個目標不會解析為同一路徑（FR-PLN-009），所以備份的名稱唯一。
 - 只在批次中有接管時才建立批次目錄。目錄權限為 `0700`。
@@ -2300,7 +2296,7 @@ SEC-001：狀態檔只有名稱、路徑、檔案編號、權限位元與 SHA-25
 
 ### 5.13 停止管理的表示
 
-**內建輸出**（03 §12「停止管理與同位置新輸出」）：內建輸出不在 manifest 中，無法「移除宣告」。停止管理時，在 manifest 寫入只含 `removed = true` 的覆寫：
+**內建輸出**（03 §12 第 6 項）：內建輸出不在 manifest 中，無法「移除宣告」。停止管理時，在 manifest 寫入只含 `removed = true` 的覆寫：
 
 ```toml
 [builtin.alacritty]
@@ -2322,7 +2318,7 @@ removed = true
 
 ## 6. 關鍵演算法與平台處理
 
-本節定義路徑的表示與比較、檔案操作如何與重檢綁定、寫入與回復，以及多程序互斥，細化 03 §12 的「並行與外部修改」「路徑安全」，以及本文件 §5 的路徑規則。演算法只依賴 §7 的平台假設，其中本節新增的列在 §7.7。各演算法由哪個類別負責見 §4；同步點與故障注入見 §8。
+本節定義路徑的表示與比較、檔案操作如何與重檢綁定、寫入與回復，以及多程序互斥，回答 03 §12 第 4、5 項與 §5 留給本節的決定。演算法只依賴 §7 的平台假設，其中本節新增的列在 §7.7。各演算法由哪個類別負責見 §4；同步點與故障注入見 §8。
 
 ### 6.1 home 與路徑
 
@@ -2374,7 +2370,7 @@ FR-PLN-010 的兩個驗收例：`~/a/../b.conf` 在正規化時就變成 `~/b.co
 
 ### 6.3 觀測與操作綁定
 
-預檢通過，不代表執行時目標仍然相同（03 §12「並行與外部修改」）。本節的做法：規劃時記錄觀測；每次操作前依觀測核對，並把核對和操作綁在同一組 handle 上；平台無法綁定的空窗，以操作後的核對找出並復原。
+預檢通過，不代表執行時目標仍然相同（03 §12 第 4 項）。本節的做法：規劃時記錄觀測；每次操作前依觀測核對，並把核對和操作綁在同一組 handle 上；平台無法綁定的空窗，以操作後的核對找出並復原。
 
 **觀測**：規劃時，`Planner` 為每個目標記錄下列資料。狀態檔、本機設定與 manifest 的讀取也記錄同樣的觀測。
 
@@ -2497,13 +2493,13 @@ Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保�
 
 ### 6.7 多程序互斥
 
-SRS AS-5 假設同一組目標同時只有一個 rosamta 程序在套用；03 §12「並行與外部修改」要求說明多個 rosamta 同時執行時怎麼處理。
+SRS AS-5 假設同一組目標同時只有一個 rosamta 程序在套用；03 §12 第 4 項要求說明多個 rosamta 同時執行時怎麼處理。
 
 - 會寫入的子指令（套用，包括指定接受 drift；納入管理、修改屬性、停止管理；初始化）在讀取任何設定之前，取得 `<狀態目錄>/lock` 的獨占鎖定，持有到程序結束。取不到時立即回報「另一個 rosamta 程序正在執行」與鎖定檔的路徑，回傳 `1`，不等待。
 - 預覽、摘要、查詢與說明不取得鎖定：鎖定檔可能需要建立，違反預覽與查詢的唯讀要求（FR-PLN-004、FR-QRY-006）。另一個程序正在套用時，預覽看到的是當下的檔案。
 - Linux 與 macOS：經 §6.1 的走訪，以 `openat(O_RDWR | O_CREAT | O_NOFOLLOW, 0600)` 開啟鎖定檔，再呼叫 `flock(LOCK_EX | LOCK_NB)`。不用 `fcntl` 的記錄鎖：同一個程序關閉該檔案的任何一個 fd，`fcntl` 鎖就會釋放。Windows：以共用模式 `0` 和 `OPEN_ALWAYS` 開啟，已被其他程序開啟時以 `ERROR_SHARING_VIOLATION` 失敗（ASM-20）。
 - 程序結束或被終止時，作業系統釋放鎖定，不會留下需要手動刪除的鎖。鎖定檔建立後不刪除：刪除後再建立，兩個程序可能各自鎖住不同的檔案。
-- 狀態目錄與鎖定檔可能還不存在。只有會寫入的子指令會呼叫 `WriteLock::acquire`；它先依 §5.1 以 `ensure_private_dir` 建立缺少的狀態目錄，再以 `lock` 建立或開啟鎖定檔並取得鎖定。這一步只準備鎖定，其他變更須等鎖定成功後再做。
+- 初始化時狀態目錄可能還不存在，先依 §5.1 建立狀態目錄，再取得鎖定。
 
 **停止管理與套用**（§5.13、FR-MAN-025、04 §2）：兩者取得同一個鎖定，不會交錯執行。套用在取得鎖定之後才規劃，不沿用先前預覽的計畫，所以停止管理完成後的套用，一定依新的 manifest 與狀態檔規劃；04 §2 提到的計畫版本檢查不需要另外實作。A5 最後一個情境中，若在套用持有鎖定時執行停止管理，停止管理會因取不到鎖定而失敗，套用依原計畫完成，屬於 04 §5「平台阻止外部操作」的情形。
 
@@ -2535,20 +2531,20 @@ SRS AS-5 假設同一組目標同時只有一個 rosamta 程序在套用；03 §
 
 ## 7. 平台假設清單
 
-本節列出設計依賴、而 Rust 標準函式庫不保證的作業系統行為。每項假設以 `ASM-NN` 編號，列出官方文件依據、文件保證的範圍，以及 pilot 結果（`prototypes/pilot/`）。§6 的演算法只依賴本節列出的行為。§13.2 列出各項假設的驗證情境與條件。
+本節列出設計依賴、而 Rust 標準函式庫不保證的作業系統行為。每項假設以 `ASM-NN` 編號，列出官方文件依據、文件保證的範圍，以及 pilot 結果（`prototypes/pilot/`）。§6 的演算法只依賴本節列出的行為；06 為每個 `ASM-NN` 安排測試情境（§13）。
 
 pilot 結果分四種：
 
 - 通過：官方文件有保證，pilot 在三平台的結果也相符。
 - 有條件：pilot 在三平台都相符，但相關行為官方文件沒有寫明，或須由設計另外確保某個前提。條件寫在「保證範圍與條件」欄。
-- 未驗證：pilot 無法重現這個行為，例如需要重新開機。須寫明假設不成立時的後果，以及可在 pilot 或正式驗收中採用的驗證方式。
+- 未驗證：pilot 無法重現這個行為，例如需要重新開機。須寫明假設不成立時的後果，以及由 pilot 或 06 如何驗證。
 - 不可行：這個做法無法滿足需求，須改變設計或修訂 SRS（04 §3.3 末段）。
 
 本版沒有「不可行」的項目。「未驗證」的只有 ASM-15。P4、P5 驗證的是選定套件的行為，不屬於平台假設，結果見 §2.2、§2.3；兩者在三平台都通過。
 
 ### 7.1 驗證環境
 
-證據來自 pilot workflow 的 CI run 42634818704，P1–P5 與發佈檢查全部通過。§7.7 的 P6 結果來自 CI run 42785134928，這個 run 也重跑了 P1–P5 與發佈檢查，全部通過；環境與下表相同，只有 ubuntu runner 的 kernel 為 7.0.0-1014-aws。§7.8 的 P7 結果來自 CI run 42932273514（ASM-22）與 42933094074（ASM-23），環境與下表相同，兩個 run 的 P1–P6 與發佈檢查也全部通過。runner 映像檔固定版本；驗收須指定正式支援的平台版本（PORT-001）。
+證據來自 pilot workflow 的 CI run 42634818704，P1–P5 與發佈檢查全部通過。§7.7 的 P6 結果來自 CI run 42785134928，這個 run 也重跑了 P1–P5 與發佈檢查，全部通過；環境與下表相同，只有 ubuntu runner 的 kernel 為 7.0.0-1014-aws。§7.8 的 P7 結果來自 CI run 42932273514（ASM-22）與 42933094074（ASM-23），環境與下表相同，兩個 run 的 P1–P6 與發佈檢查也全部通過。runner 映像檔固定版本；正式支援的平台版本由 06 決定（PORT-001）。
 
 | 環境 | 作業系統 | 測試目錄的檔案系統 | 執行身分 |
 | --- | --- | --- | --- |
@@ -2565,7 +2561,7 @@ Windows 的開發人員模式以登錄值 `AllowDevelopmentWithoutDevLicense` �
 | --- | --- | --- | --- | --- |
 | ASM-01 | Linux 與 macOS 上，同一目錄內的 `rename` 以一次操作取代目標；程序在任何時間點被終止，目標都是完整的舊檔或新檔 | POSIX `rename`：取代期間名稱為 new 的目錄項目持續可見，且指向原本的 new 或 old | 只涵蓋程序終止，不涵蓋斷電與系統當機。macOS 的 `fsync` 不要求磁碟清空快取（須用 `F_FULLFSYNC`），REL-001、REL-002 也只要求程序終止的情境 | 通過。P2 在 Linux、macOS 各終止 100 次，輸出 1 MiB 與狀態檔 4 KiB 都沒有損毀或消失 |
 | ASM-02 | Windows 上，`MoveFileExW(MOVEFILE_REPLACE_EXISTING \| MOVEFILE_WRITE_THROUGH)` 以一次操作取代目標 | `MoveFileExW` 文件說明會取代既有檔案，`MOVEFILE_WRITE_THROUGH` 等到移動寫入磁碟才返回；文件沒有說明是否為原子操作 | 依 pilot 在本機 NTFS 的結果。取代後的檔案使用暫存檔的安全描述元，也就是目錄繼承的 ACL，不保留原檔的 ACL。`ReplaceFileW` 會保留原檔屬性，但程序被終止後目標可能消失，不採用 | 有條件。兩個 Windows job 各終止 100 次，沒有損毀或消失。同一 run 中，`ReplaceFileW` 在兩個 job 共有 7 次目標消失 |
-| ASM-03 | Linux 與 macOS 上，以 `O_CREAT \| O_EXCL` 和模式 `0600` 建立的暫存檔，建立當下就不允許其他帳號存取 | POSIX `open`：新檔的權限位元取自 mode 參數，再由 umask 移除位元 | umask 只會移除權限，不會增加，所以權限不會比 `0600` 寬。Windows 的暫存檔沿用目錄繼承的 ACL，保護方式在 §6 定義，須依 04 §5 的 A13 驗證 | 通過。P2 在 Linux、macOS 留下的暫存檔與替換後的目標都是 `0600` |
+| ASM-03 | Linux 與 macOS 上，以 `O_CREAT \| O_EXCL` 和模式 `0600` 建立的暫存檔，建立當下就不允許其他帳號存取 | POSIX `open`：新檔的權限位元取自 mode 參數，再由 umask 移除位元 | umask 只會移除權限，不會增加，所以權限不會比 `0600` 寬。Windows 的暫存檔沿用目錄繼承的 ACL，保護方式在 §6 定義，以 06 的 A13 驗證 | 通過。P2 在 Linux、macOS 留下的暫存檔與替換後的目標都是 `0600` |
 
 ### 7.3 不跟隨連結與操作綁定
 
@@ -2574,7 +2570,7 @@ Windows 的開發人員模式以登錄值 `AllowDevelopmentWithoutDevLicense` �
 | ASM-04 | 檔案身分可由 handle 取得並比較：Linux 與 macOS 用 `st_dev` 加 `st_ino`，Windows 用 volume 序號加 128 位元的 file ID | POSIX `<sys/stat.h>`：`st_ino` 與 `st_dev` 合起來在系統內唯一識別一個檔案。`FILE_ID_INFO` 文件：file ID 在同一 volume 內識別檔案 | 檔案刪除後編號可能被重複使用，所以只在同一批次內、對仍存在或剛確認過的檔案比較。網路檔案系統不在驗證範圍 | 通過。P1、P3 都用身分比較偵測替換，所有成功的替換都被偵測到 |
 | ASM-05 | Linux 與 macOS 上，從 home 以 `openat(O_NOFOLLOW \| O_DIRECTORY)` 逐層開啟目錄，遇到符號連結就失敗；之後以目錄 fd 為基準的 `openat`、`renameat`、`unlinkat`、`linkat` 和 `fstatat(AT_SYMLINK_NOFOLLOW)`，都作用在該 fd 對應的目錄 | POSIX `open`：`O_NOFOLLOW` 遇到符號連結以 `ELOOP` 失敗；`O_DIRECTORY` 遇到非目錄以 `ENOTDIR` 失敗；相對路徑以 fd 對應的目錄為基準 | home 本身的路徑不在此範圍，由 §6 的正規化規則處理 | 通過。預檢後替換父目錄或上層目錄的 24 個案例，在 Linux、macOS 都被拒絕；P3 讀取連結時以 `ELOOP` 失敗，不會讀到所指檔案 |
 | ASM-06 | Linux 與 macOS 上，持有目錄 fd 不能阻止其他程序改名或搬移該目錄。設計因此在操作後重新走訪路徑；若路徑已不通往持有的目錄，就經同一個 fd 復原 | POSIX `rename`：目錄正被其他程序使用時，是否以 `EBUSY` 失敗由實作決定；Linux 與 macOS 不會因目錄已被開啟而拒絕改名 | DC-002 在 Unix 的保證範圍：寫入不會落在替代的目錄或連結指向的位置。但若外部程序把原目錄整個搬到 home 外，本批寫入會短暫出現在搬出去的目錄中，重檢後隨即復原 | 有條件。最後一次檢查後替換的 24 個案例，Linux、macOS 的建立、更新、刪除都已復原，快照都判定失效；其中搬出 home 的 6 個寫入案例，寫入曾短暫出現在 home 外。另一個程序持續替換父目錄時跑 300 輪，沒有違反任何檢查條件 |
-| ASM-07 | Linux 與 macOS 沒有以 handle 刪除或改名檔案的操作，核對檔案身分到 `unlinkat`、`renameat` 之間仍有空窗 | POSIX `unlinkat`、`renameat` 只接受名稱 | 這個空窗內的替換無法事先阻止。§6.3 的取代以交換式改名（ASM-17）、刪除以先移開再核對，把被換入的檔案移到另一個名稱後再核對，不會刪除它；只有檔案系統不支援交換時，取代仍有這個空窗。§8.2 的 `BeforeOperation` 同步點就在這個空窗；驗收須涵蓋不支援交換時退回 `renameat` 的情形 | 有條件。P1 的同步點不在這個空窗內；持續替換的 300 輪沒有違反檢查條件。P6 在這個空窗換入一般檔案、連結或目錄，或就地修改，交換式改名的取代與先移開的刪除都發現並放回原位（ASM-17） |
+| ASM-07 | Linux 與 macOS 沒有以 handle 刪除或改名檔案的操作，核對檔案身分到 `unlinkat`、`renameat` 之間仍有空窗 | POSIX `unlinkat`、`renameat` 只接受名稱 | 這個空窗內的替換無法事先阻止。§6.3 的取代以交換式改名（ASM-17）、刪除以先移開再核對，把被換入的檔案移到另一個名稱後再核對，不會刪除它；只有檔案系統不支援交換時，取代仍有這個空窗。§8.2 的 `BeforeOperation` 同步點就在這個空窗；不支援交換時退回 `renameat` 的情形由 06 驗證 | 有條件。P1 的同步點不在這個空窗內；持續替換的 300 輪沒有違反檢查條件。P6 在這個空窗換入一般檔案、連結或目錄，或就地修改，交換式改名的取代與先移開的刪除都發現並放回原位（ASM-17） |
 | ASM-08 | Windows 上，以具資料存取權（`FILE_LIST_DIRECTORY`）、不含 `FILE_SHARE_DELETE` 的 handle 持有目錄時，其他程序無法改名或刪除該目錄。在這些目錄內的寫入可以用路徑操作 | `CreateFileW` 文件：沒有 `FILE_SHARE_DELETE` 時，其他程序以 delete 存取權開啟會失敗，而 delete 存取權同時涵蓋刪除與改名 | 文件沒有說明哪些存取權會參與共用檢查。pilot 發現只有 `FILE_READ_ATTRIBUTES` 和 `SYNCHRONIZE` 的 handle 擋不住改名，所以須加上 `FILE_LIST_DIRECTORY` | 有條件。兩個 Windows job 中，最後一次檢查後的 48 次替換都被擋下（sharing violation），操作照計畫完成。持續替換時，外部程序的嘗試被擋下 225–242 次 |
 | ASM-09 | Windows 上，以 `FILE_FLAG_OPEN_REPARSE_POINT` 開啟會取得 reparse point 本身，不跟隨；開啟目錄後以 `GetFinalPathNameByHandleW` 核對最終路徑 | `CreateFileW` 文件：指定此旗標時不做一般的 reparse point 處理，直接開啟 reparse point | 符號連結、junction 以及其他 reparse point 一律視為連結。路徑中的目錄是 reparse point 時拒絕操作；目標是 reparse point 時，只有 `IO_REPARSE_TAG_SYMLINK` 可以接管（§6） | 通過。預檢後換成 junction 的案例都被拒絕；P3 讀取連結時開到的是連結本身，判定類型不符，不會讀到所指檔案 |
 | ASM-10 | Windows 上，以 handle 設定 `FileDispositionInfo` 刪除檔案，刪除的就是核對過身分的那個檔案 | `FILE_DISPOSITION_INFO` 文件：handle 關閉時刪除該檔案 | 須以 `DELETE` 存取權開啟 | 通過。P1 的刪除案例照計畫完成 |
@@ -2601,7 +2597,7 @@ ASM-11、ASM-12 的其他 pilot 案例：備份前若目標已換成一般檔案
 
 | 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
 | --- | --- | --- | --- | --- |
-| ASM-14 | §2.1 的發佈目標只依賴作業系統內建的函式庫：Linux 為 static-pie，不依賴任何共享函式庫；Windows 只依賴系統 DLL；macOS 只依賴 `libSystem` | Apple QA1118：Apple 不支援靜態連結的執行檔，只保證動態連結的系統函式庫維持相容，所以 macOS 執行檔連結 `libSystem`，這是每台 macOS 都有的系統函式庫 | Windows 依賴 `kernel32`、`advapi32`、`ntdll` 與 API set `api-ms-win-core-synch-l1-2-0`。DC-004 驗收要求的「在只安裝作業系統與 git 的乾淨環境執行」仍須以首版成品驗證 | 有條件。四個發佈目標都建置成功，並以 `ldd`、`otool -L`、`dumpbin /dependents` 檢查依賴；toml_edit、MiniJinja 是純 Rust，不增加動態依賴 |
+| ASM-14 | §2.1 的發佈目標只依賴作業系統內建的函式庫：Linux 為 static-pie，不依賴任何共享函式庫；Windows 只依賴系統 DLL；macOS 只依賴 `libSystem` | Apple QA1118：Apple 不支援靜態連結的執行檔，只保證動態連結的系統函式庫維持相容，所以 macOS 執行檔連結 `libSystem`，這是每台 macOS 都有的系統函式庫 | Windows 依賴 `kernel32`、`advapi32`、`ntdll` 與 API set `api-ms-win-core-synch-l1-2-0`。DC-004 驗收要求的「在只安裝作業系統與 git 的乾淨環境執行」還沒做，交給 06 | 有條件。四個發佈目標都建置成功，並以 `ldd`、`otool -L`、`dumpbin /dependents` 檢查依賴；toml_edit、MiniJinja 是純 Rust，不增加動態依賴 |
 
 ### 7.6 跨次執行的檔案身分
 
@@ -2609,7 +2605,7 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 
 | 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
 | --- | --- | --- | --- | --- |
-| ASM-15 | 目錄存在期間，它的檔案編號跨程序、跨重新開機都不變：Linux 與 macOS 的 `st_ino`，Windows 的 volume 序號與 128 位元 file ID。狀態檔不記錄 Linux 與 macOS 的 `st_dev` | `BY_HANDLE_FILE_INFORMATION` 文件：NTFS 上的檔案在刪除前保持同一個 file ID。POSIX `<sys/stat.h>` 只規定 `st_dev` 加 `st_ino` 在系統內唯一，沒有規定重新掛載後不變 | `st_dev` 由核心在掛載時配給，例如 btrfs subvolume 使用匿名裝置編號，重新開機後可能不同，所以不記錄。不比較 `st_dev` 時，不同檔案系統上的目錄可能編號相同；目錄刪除後，編號也可能被新目錄重複使用（ASM-04）。這兩種誤判都會把父目錄當成沒有被替換，但 §5.11 仍要求內容符合紀錄的實際基準才會覆寫或刪除，所以被改動的內容與 rosamta 上次寫入的相同。反過來，編號若意外改變，紀錄判為位置無法確認：啟用的輸出改按未受管理處理，清除時保留檔案，不會誤寫或誤刪 | 未驗證。CI 無法重新開機。本機 btrfs 的 home 裝置編號為 0:47，major 為 0，是匿名裝置。驗收須在實機上於重新開機前後各套用一次，確認沒有紀錄被判為位置無法確認 |
+| ASM-15 | 目錄存在期間，它的檔案編號跨程序、跨重新開機都不變：Linux 與 macOS 的 `st_ino`，Windows 的 volume 序號與 128 位元 file ID。狀態檔不記錄 Linux 與 macOS 的 `st_dev` | `BY_HANDLE_FILE_INFORMATION` 文件：NTFS 上的檔案在刪除前保持同一個 file ID。POSIX `<sys/stat.h>` 只規定 `st_dev` 加 `st_ino` 在系統內唯一，沒有規定重新掛載後不變 | `st_dev` 由核心在掛載時配給，例如 btrfs subvolume 使用匿名裝置編號，重新開機後可能不同，所以不記錄。不比較 `st_dev` 時，不同檔案系統上的目錄可能編號相同；目錄刪除後，編號也可能被新目錄重複使用（ASM-04）。這兩種誤判都會把父目錄當成沒有被替換，但 §5.11 仍要求內容符合紀錄的實際基準才會覆寫或刪除，所以被改動的內容與 rosamta 上次寫入的相同。反過來，編號若意外改變，紀錄判為位置無法確認：啟用的輸出改按未受管理處理，清除時保留檔案，不會誤寫或誤刪 | 未驗證。CI 無法重新開機。本機 btrfs 的 home 裝置編號為 0:47，major 為 0，是匿名裝置。06 在實機上於重新開機前後各套用一次，確認沒有紀錄被判為位置無法確認 |
 
 ### 7.7 §6 新增的假設
 
@@ -2618,7 +2614,7 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 | 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
 | --- | --- | --- | --- | --- |
 | ASM-16 | 有不覆蓋既有項目的建立與改名：Linux 與 macOS 的 `linkat` 在新名稱已存在時以 `EEXIST` 失敗；不覆蓋的改名用 `renameat2(RENAME_NOREPLACE)`（Linux）與 `renameatx_np(RENAME_EXCL)`（macOS），目錄與檔案都適用；Windows 的 `MoveFileExW` 不指定 `MOVEFILE_REPLACE_EXISTING` 時，目的地已存在就失敗 | POSIX `link`：path2 已存在時以 `EEXIST` 失敗，連結也算存在。Linux `rename(2)`：`RENAME_NOREPLACE` 在 newpath 已存在時失敗，須檔案系統支援。macOS `rename(2)`：`RENAME_EXCL` 須檔案系統支援（`VOL_CAP_INT_RENAME_EXCL`）。`MoveFileExW` 文件：未指定該旗標時不取代既有檔案 | `linkat` 需要檔案系統支援 hard link；不支援時（例如 FAT 系列）建立會失敗，依執行失敗整批回復，不會覆寫。不覆蓋的改名用於初始化與 §6.3 刪除時的移回。不支援時初始化回報失敗；移回失敗時，被移開的項目留在暫存名稱下，回報它的位置，不刪除（§6.5）。pilot 沒有測試不支援的檔案系統 | 通過。三平台上，名稱已被一般檔案、目錄或連結占用時（Windows 測一般檔案與目錄），建立都失敗（Linux 與 macOS 為 `EEXIST`，Windows 為 `ERROR_ALREADY_EXISTS`），占用的項目與暫存檔都不變。目錄改名到空目錄、非空目錄或一般檔案也都失敗。對照組：Linux 與 macOS 的一般 `renameat` 會取代空目錄 |
-| ASM-17 | Linux 的 `renameat2(RENAME_EXCHANGE)` 與 macOS 的 `renameatx_np(RENAME_SWAP)` 以一次操作交換兩個名稱，任何時間點兩個名稱都指向完整的檔案 | Linux `rename(2)`：`RENAME_EXCHANGE` 以原子方式交換 oldpath 與 newpath，兩者都須存在，Linux 3.15 起提供，須檔案系統支援。macOS `rename(2)`：`RENAME_SWAP` 交換來源與目的地，須檔案系統支援（`VOL_CAP_INT_RENAME_SWAP`） | 不支援時回傳 `EINVAL` 或 `ENOTSUP`，§6.3 改用 `renameat`，最後一次核對與取代之間留有空窗（ASM-07）。程序在交換後被終止時，目標是完整的新檔，舊檔留在暫存檔的名稱下，由 §6.5 清理。pilot 沒有測試不支援交換的檔案系統，驗收須涵蓋退回 `renameat` 的路徑 | 通過。Linux 與 macOS 交換後，兩個名稱的身分互換；目標是連結時，搬動的是連結本身，所指檔案不變；另一個名稱不存在時以 `ENOENT` 失敗。另一個程序反覆交換時讀取 10,000 次、終止 50 次，沒有一次找不到檔案或讀到不完整的內容。依 §6.3 實作的取代與刪除，在 `BeforeOperation` 把目標換成一般檔案、連結或目錄，或就地修改，都判定不符並放回原位，沒有留下暫存檔 |
+| ASM-17 | Linux 的 `renameat2(RENAME_EXCHANGE)` 與 macOS 的 `renameatx_np(RENAME_SWAP)` 以一次操作交換兩個名稱，任何時間點兩個名稱都指向完整的檔案 | Linux `rename(2)`：`RENAME_EXCHANGE` 以原子方式交換 oldpath 與 newpath，兩者都須存在，Linux 3.15 起提供，須檔案系統支援。macOS `rename(2)`：`RENAME_SWAP` 交換來源與目的地，須檔案系統支援（`VOL_CAP_INT_RENAME_SWAP`） | 不支援時回傳 `EINVAL` 或 `ENOTSUP`，§6.3 改用 `renameat`，最後一次核對與取代之間留有空窗（ASM-07）。程序在交換後被終止時，目標是完整的新檔，舊檔留在暫存檔的名稱下，由 §6.5 清理。pilot 沒有測試不支援交換的檔案系統，退回 `renameat` 的路徑由 06 驗證 | 通過。Linux 與 macOS 交換後，兩個名稱的身分互換；目標是連結時，搬動的是連結本身，所指檔案不變；另一個名稱不存在時以 `ENOENT` 失敗。另一個程序反覆交換時讀取 10,000 次、終止 50 次，沒有一次找不到檔案或讀到不完整的內容。依 §6.3 實作的取代與刪除，在 `BeforeOperation` 把目標換成一般檔案、連結或目錄，或就地修改，都判定不符並放回原位，沒有留下暫存檔 |
 | ASM-18 | Windows 上，以 `FILE_READ_DATA` 開啟、共用模式只有 `FILE_SHARE_READ` 的檔案 handle 存在期間，其他程序無法改名、刪除或寫入該檔案 | `CreateFileW` 文件：沒有 `FILE_SHARE_DELETE` 時，其他程序以 delete 存取權開啟會失敗；沒有 `FILE_SHARE_WRITE` 時，以寫入存取權開啟會失敗 | ASM-08 的檔案版本。ASM-08 發現只有屬性存取權的 handle 不參與共用檢查，所以須帶 `FILE_READ_DATA`。關閉 handle 到 `MoveFileExW` 之間的空窗不受保護（§6.3）。其他程序以 `MoveFileExW` 取代目標時，失敗的錯誤是 `ERROR_ACCESS_DENIED`，不是 sharing violation | 有條件。兩個 Windows job 中，取代與刪除持有目標期間，另一個程序的改名、刪除與寫入都以 `ERROR_SHARING_VIOLATION` 失敗，取代目標以 `ERROR_ACCESS_DENIED` 失敗，讀取成功；之後操作照計畫完成。對照組：只有屬性存取權的 handle 擋不住改名、刪除與寫入 |
 | ASM-19 | Windows 上，`CreateDirectoryW` 可在建立時指定 DACL，之後在目錄中建立的檔案繼承它；`GetSecurityInfo`、`SetSecurityInfo` 可經由 handle 讀取並設定檔案的 DACL，包含是否繼承上層 | `CreateDirectoryW` 文件：`lpSecurityAttributes` 指定新目錄的安全描述元。`SetSecurityInfo` 文件：`PROTECTED_DACL_SECURITY_INFORMATION` 使 DACL 不繼承上層 | 讀取原檔的 DACL 須有 `READ_CONTROL`，設定暫存檔的 DACL 須有 `WRITE_DAC`，檔案擁有者兩者都有。不成立時，取代後的輸出改用目錄繼承的 ACL（同 ASM-02），程式目錄則沿用上層的 ACL | 通過。兩個 Windows job 中，以 `D:P` 加三個 `OICI` 項目建立的目錄，DACL 與指定的相同；其中新建的檔案只有這三個繼承來的項目。原檔的 DACL 不繼承上層，或含明確項目時，複製到暫存檔再以 `MoveFileExW` 取代，取代後的 SDDL 與原本完全相同。對照組：不複製時，明確項目與不繼承的設定都不見了，只剩目錄繼承的項目，與 ASM-02 相符 |
 | ASM-20 | Linux 與 macOS 的 `flock(LOCK_EX \| LOCK_NB)`，在其他程序持有鎖定時以 `EWOULDBLOCK` 失敗；Windows 以共用模式 `0` 開啟的檔案，其他程序再開啟時以 `ERROR_SHARING_VIOLATION` 失敗。兩者都在程序結束時釋放 | Linux `flock(2)`：鎖定屬於 open file description，所有相關的 fd 關閉時釋放。macOS `flock(2)`：`LOCK_NB` 時以 `EWOULDBLOCK` 失敗。`CreateFileW` 文件：共用模式為 `0` 時，其他程序無法開啟該檔案 | `flock` 不屬於 POSIX，但 Linux 與 macOS 都提供。網路檔案系統不在範圍內。不成立時，兩個 rosamta 程序可能同時套用，這超出 AS-5 的範圍，§6.3 的核對仍然有效 | 通過。三平台上，持有鎖定時另一個程序都失敗（Linux 與 macOS 為 `EWOULDBLOCK`，Windows 為 `ERROR_SHARING_VIOLATION`）。Linux 與 macOS 在同一個程序內開啟再關閉同一個檔案的另一個 fd，鎖定仍在。持有者被終止後，第一次嘗試就取得鎖定；鎖定檔沒有被刪除 |
@@ -2630,7 +2626,7 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 
 | 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
 | --- | --- | --- | --- | --- |
-| ASM-22 | 以 `git clone -- <url> .` clone 到工作目錄時，git 寫入工作目錄的實際位置。Linux 與 macOS 以 `fchdir` 進入持有的目錄後，路徑上的目錄被換成連結或其他目錄，不會改變 git 的寫入位置 | git-clone 文件只說明 `<directory>` 是 clone 的目的地，沒有說明如何解析，也沒有說明 clone 期間是否以絕對路徑操作 | 文件沒有保證，依 pilot 的結果。clone 開始後，git 以絕對路徑寫入：clone 進行中路徑上的目錄被換成連結時，之後的寫入可能經由連結落在 home 外；暫存目錄或上層在最後一次核對後被整個搬出 home 時，寫入跟著目錄到 home 外（同 ASM-06）。clone 後核對時路徑仍是改變後的狀態，兩者才會被發現；路徑在核對之前被還原時發現不了（§6.3）。本機實驗中，clone 進行中替換上層時，git 因找不到自己的 `.git/config` 而失敗，home 外沒有檔案，但這只是單次觀察，不當作保證。Windows 依 ASM-08 持有每一層，沒有這些情況。pilot 只用 file:// repo，驗收須另用 HTTPS 與 SSH 的遠端 repo 驗證 | 有條件。git 2.56.0（Windows 為 2.56.0.windows.4）。clone 開始前替換父目錄或上一層：Linux 與 macOS 的換成連結、換成 home 內的其他目錄共 4 個案例，clone 都在持有的目錄，home 外與替代目錄都沒有改變；整個搬出 home 的 2 個案例，clone 寫入搬出去的目錄。6 個案例在 clone 後重新走訪都發現路徑改變。兩個 Windows job 中，6 種替換都被擋下（sharing violation），clone 照常完成。對照組：以路徑交給 git 時，Linux 與 macOS 換成連結的 2 個案例，整個 clone 寫到 home 外 |
+| ASM-22 | 以 `git clone -- <url> .` clone 到工作目錄時，git 寫入工作目錄的實際位置。Linux 與 macOS 以 `fchdir` 進入持有的目錄後，路徑上的目錄被換成連結或其他目錄，不會改變 git 的寫入位置 | git-clone 文件只說明 `<directory>` 是 clone 的目的地，沒有說明如何解析，也沒有說明 clone 期間是否以絕對路徑操作 | 文件沒有保證，依 pilot 的結果。clone 開始後，git 以絕對路徑寫入：clone 進行中路徑上的目錄被換成連結時，之後的寫入可能經由連結落在 home 外；暫存目錄或上層在最後一次核對後被整個搬出 home 時，寫入跟著目錄到 home 外（同 ASM-06）。clone 後核對時路徑仍是改變後的狀態，兩者才會被發現；路徑在核對之前被還原時發現不了（§6.3）。本機實驗中，clone 進行中替換上層時，git 因找不到自己的 `.git/config` 而失敗，home 外沒有檔案，但這只是單次觀察，不當作保證。Windows 依 ASM-08 持有每一層，沒有這些情況。pilot 只用 file:// repo，HTTPS 與 SSH 由 06 驗證 | 有條件。git 2.56.0（Windows 為 2.56.0.windows.4）。clone 開始前替換父目錄或上一層：Linux 與 macOS 的換成連結、換成 home 內的其他目錄共 4 個案例，clone 都在持有的目錄，home 外與替代目錄都沒有改變；整個搬出 home 的 2 個案例，clone 寫入搬出去的目錄。6 個案例在 clone 後重新走訪都發現路徑改變。兩個 Windows job 中，6 種替換都被擋下（sharing violation），clone 照常完成。對照組：以路徑交給 git 時，Linux 與 macOS 換成連結的 2 個案例，整個 clone 寫到 home 外 |
 | ASM-23 | 檔案的內容或屬性改變時，狀態變更時間（Linux、macOS 的 `st_ctime`，Windows 的 `ChangeTime`）跟著更新，包括程式改寫內容後把修改時間設回原值的情況。Linux 與 macOS 沒有設定 `st_ctime` 的系統呼叫 | POSIX `<sys/stat.h>`：`st_ctime` 是最後一次狀態改變的時間；`utimensat` 只能設定存取與修改時間，而且會更新 `st_ctime`。`FILE_BASIC_INFO` 文件：`ChangeTime` 是最後一次改變的時間，`SetFileInformationByHandle` 可以設定它 | 用於 §4.16 撤回前的比較。Windows 上，有 `FILE_WRITE_ATTRIBUTES` 的程式可以把 `ChangeTime` 與修改時間都設回原值，這種修改偵測不到；只有大小不變時才會發生 | 有條件。三平台上，改寫成同樣大小的內容、把修改時間設回原值後，狀態變更時間都改變。Linux 與 macOS 沒有設回的方法；兩個 Windows job 以 `SetFileInformationByHandle` 把 `ChangeTime` 設回原值都成功 |
 
 ### 7.9 文件出處
@@ -2644,7 +2640,7 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 
 ## 8. 可測試性設計
 
-本節說明測試如何替換 rosamta 的外部依賴、在指定的時間點改動檔案，以及注入失敗。以這些機制重現 04 §5 的情境與其他驗收條件。
+本節說明測試如何替換 rosamta 的外部依賴、在指定的時間點改動檔案，以及注入失敗。04 §5 的情境與 06 的測試，都以這些機制撰寫。
 
 ### 8.1 可替換的依賴
 
@@ -2700,7 +2696,7 @@ testkit 的 `FaultFs` 包裝任一 `FileSystem` 實作，把呼叫轉給被包�
 | 中途寫入失敗 | 第 N 個目標的建立或取代回傳權限不足。另外以移除目錄寫入權限的方式實測一次，驗證平台的實際錯誤（FR-APL-002 的驗收方式） | A6 |
 | 狀態提交失敗、提交後的寫入確認失敗 | 狀態檔的取代，或 §6.6 步驟 5 讀取狀態檔時回傳錯誤 | A6、A20、A23、A25 |
 | 部分回復失敗 | 回復時某一項的操作回傳錯誤 | A6 |
-| 空間不足 | 暫存檔或快照的寫入回傳 `ENOSPC`、`ERROR_DISK_FULL`；另以容量有限的檔案系統實測 | A8 |
+| 空間不足 | 暫存檔或快照的寫入回傳 `ENOSPC`、`ERROR_DISK_FULL`；06 另以容量有限的檔案系統實測 | A8 |
 | 停止管理的兩次寫入之間失敗 | manifest 的取代回傳錯誤 | A5 |
 | 期望內容在寫入途中損毀 | 改動傳給被包裝實作的內容，使 `OpOutcome::written` 與期望的版本不同（§4.12） | A24 |
 
@@ -2721,7 +2717,7 @@ core 的單元測試不能使用 testkit。testkit 依賴 core；core 的單元�
 
 ### 8.5 04 §5 情境與同步點
 
-下表列出 04 §5 中指定了時間點的情境，以及對應的同步點（括號內為操作種類）。「預期」欄依 §6 列出各情境的驗收條件。各情境共同的部分（回傳 `1`、回復其他可安全處理的項目、逐項回報）不重複寫出。
+下表列出 04 §5 中指定了時間點的情境，以及對應的同步點（括號內為操作種類）。「預期」欄是依 §6 的處理方式，06 依此撰寫驗收條件；各情境共同的部分（回傳 `1`、回復其他可安全處理的項目、逐項回報）不重複寫出。
 
 | 情境 | 04 §5 的時間點 | 同步點 | 預期 |
 | --- | --- | --- | --- |
@@ -2811,7 +2807,7 @@ IF-001 的每項操作是 `rosamta` 的一個子指令。預覽、摘要與套�
 | `--delete-modified <路徑>`（可重複）、`--delete-modified-all` | `delete_modified` 加入 `Path` 或 `All` | FR-DRF-014 |
 
 - `--overwrite-all` 與 `--accept-all` 同時出現是參數錯誤。同一個路徑同時被指定覆寫與接受，由 `Planner` 回報 `apply.choice-conflict`（§4.12）。`-all` 與指定路徑的不同處理同時出現時，指定路徑的優先，例如 `--accept-all --overwrite ~/.gitconfig` 只覆寫 `~/.gitconfig`，其他 drift 衝突都接受。
-- `--strict` 可以和其他處理方式一起使用。有 drift 衝突時嚴格模式優先，不套用指定的處理（03 §12「嚴格模式與 exit code」）。
+- `--strict` 可以和其他處理方式一起使用。有 drift 衝突時嚴格模式優先，不套用指定的處理（03 §12 第 1 項）。
 - 互動模式延後（§1.2），所以沒有啟用互動的選項；USE-002 的處理見 §12。
 
 **初始化**：
@@ -2897,7 +2893,7 @@ update     ~/.ssh/config              ssh-config proceed  mode 0644 -> 0600
 +foreground = #c0caf5
 ```
 
-- 內容差異是 unified diff（IF-003），前後各 3 行的上下文。檔名相對於 home，加上 `a/`、`b/`，建立與刪除的一方是 `/dev/null`。含空白、引號或反斜線的標頭路徑以 Git 的 C 字串規則引號表示，讓 `patch` 能辨認完整檔名。擷取未上色的 unified diff 區段後，在 home 以 GNU `patch --binary -p1` 套用；`--binary` 可保留 CRLF。檔案結尾沒有換行時輸出 `\ No newline at end of file`，`patch` 的結果才會逐位元組相同。
+- 內容差異是 unified diff（IF-003），前後各 3 行的上下文。檔名相對於 home，加上 `a/`、`b/`，建立與刪除的一方是 `/dev/null`，所以在 home 執行 `patch -p1` 就能套用。檔案結尾沒有換行時輸出 `\ No newline at end of file`，`patch` 的結果才會逐位元組相同。
 - 任一方不是 UTF-8 或含 NUL 字元時，只輸出 `Binary files a/<路徑> and b/<路徑> differ`。
 - 權限的改變寫在項目的那一行（`mode 0644 -> 0600`），不寫進差異：`patch` 不處理權限。只有權限不同的項目沒有內容差異。
 - 保留的項目也輸出差異，表示指定覆寫或接管時會寫入的內容。
@@ -3051,7 +3047,7 @@ JSON 的型別定義在執行檔的 `output::json`（§9.10），由 core 的型
 
 ### 9.9 說明與格式說明
 
-**說明**（IF-002）：每個子指令的說明由 clap 產生，包含用途、參數與選項，另以 `after_long_help` 加上兩段固定的文字：`Exit status`（該子指令可能的 exit code，依 §9.7）與 `Examples`（至少一個範例）。說明是編進執行檔的文字，在 §9.3 第 1 步輸出，不需要來源目錄、主機資訊或網路。驗收時在沒有來源目錄與網路的環境，對每個子指令檢查這四項內容。
+**說明**（IF-002）：每個子指令的說明由 clap 產生，包含用途、參數與選項，另以 `after_long_help` 加上兩段固定的文字：`Exit status`（該子指令可能的 exit code，依 §9.7）與 `Examples`（至少一個範例）。說明是編進執行檔的文字，在 §9.3 第 1 步輸出，不需要來源目錄、主機資訊或網路。06 在沒有來源目錄與網路的環境，對每個子指令檢查這四項內容。
 
 **格式說明**（IF-005）：`schema manifest`、`schema module`、`schema profile`、`schema local` 列出該檔案的每個鍵：名稱、TOML 型別、是否必填、預設值與說明，最後附一個範例檔。內容來自 `config::schema`（§4.3），`ConfigLoader` 也以同一份資料判定不認得的鍵並列出可用的鍵（FR-MAN-029）。說明與實際接受的鍵出自同一個來源，不會不一致；單元測試以 `ConfigLoader` 載入每個範例檔，確認沒有任何診斷（IF-005 的驗收條件）。
 
@@ -3101,7 +3097,7 @@ Command 不在 Valente Ch.6 介紹的模式中，名稱取自 GoF。回復快照
 
 | 型別 | 只能由誰建立 | 保證 |
 | --- | --- | --- |
-| `WriteLock` | `WriteLock::acquire`（§4.10） | 建立狀態目錄與鎖定檔後才取得鎖定，其他變更都要求鎖定；預覽與查詢不執行鎖定流程（FR-PLN-004、FR-QRY-006） |
+| `WriteLock` | `WriteLock::acquire`（§4.10） | 會改變檔案的操作都已取得鎖定；預覽與查詢無法寫入（FR-PLN-004、FR-QRY-006） |
 | `Reported`、`Checked<T>` | `Diagnostics::error`（§4.1） | 回傳失敗時至少已記錄一個錯誤 |
 | `TemplateValues` | `PreflightChecker::check_inputs`（§4.5） | 交給範本的值都通過了型別檢查 |
 | `DesiredContent` | `Planner`（§4.12） | 寫入的內容來自預檢時的那一次渲染或讀取（A24） |
@@ -3131,7 +3127,7 @@ Valente 以 conceptual integrity 指系統的一致性：同類的問題以同�
 | 規則 | 範圍與例外 | 檢查方式 |
 | --- | --- | --- |
 | 使用者輸入的問題一律以 `Diagnostic` 回報；`FsError` 只在 core 內部，由使用它的類別轉成自己的代碼；執行錯誤記在 `ApplyReport`，由執行檔轉成診斷（§9.5）。panic 只表示程式本身的錯誤 | 內建資源的錯誤是程式的錯誤，以 panic 處理（§4.2） | review；core 啟用 clippy 的 `unwrap_used` 與 `expect_used`，維持內部不變量的 `expect` 須加 `allow` 並寫出理由 |
-| 輸出、狀態檔、manifest、本機設定、來源副本與暫存目錄依觀測核對後寫入（§6.3） | git 寫入暫存目錄（§4.16）；取得鎖定須先準備狀態目錄與鎖定檔（§4.10） | 修改輸出、狀態及設定的方法要求 `&WriteLock`；core 禁用 `std::fs`（§11.3） |
+| 所有寫入都是依觀測核對的綁定操作（§6.3）：輸出、狀態檔、manifest、本機設定、來源副本與暫存目錄 | git 以路徑寫入暫存目錄（§4.16）；`ensure_private_dir` 在取得鎖定前建立狀態目錄（§4.10） | 會改變檔案的 `FileSystem` 方法都要求 `&WriteLock`；core 禁用 `std::fs`（§11.3） |
 | 前置條件以型別表示（§10.2） | — | 編譯器；建構函式的限制見 §11.3 |
 | 每條規則只寫在一處：Profile 的判定在 `ProfileRule::matches`；覆寫層級在 `ValueResolver`；路徑的正規化在 `path`；位置的比較在 `LocationKey::relation`；§5.11 的判定在 `Planner`；讀取設定的順序在 `ConfigLoader::load_layout`；接受的鍵在 `config::schema`；exit code 在執行檔（§9.7）；JSON 的欄位在 `output::json` | — | review；§11.3 的 module 依賴檢查讓其他 module 無法引用這些規則的內部 |
 | 外部套件與平台 API 只出現在一個 module：TOML 在 `config` 與 `docedit`，MiniJinja 在 `template`，系統呼叫在 platform，參數解析在執行檔的 `cli` | `serde_json` 用在 `state` 的狀態檔與執行檔的 JSON 輸出，兩者的格式互不相關 | 各 crate 的 `Cargo.toml` 只列需要的套件（§3.1）；module 依賴檢查 |
@@ -3185,7 +3181,7 @@ core 另外啟用 `clippy::unwrap_used` 與 `clippy::expect_used`（§11.1）。
 **module 依賴**：core 的 integration test（`rosamta-core/tests/architecture.rs`）讀取 `src/` 的原始碼檢查，隨 `cargo test` 在三平台執行，因此也是每個 commit 的檢查：
 
 - module 之間的引用一律寫成 `crate::<module>`，`super::` 只用在同一個 module 內。測試收集每個 module 引用的 `crate::<module>`，與 §3.2 的「可依賴」比對；出現 `super::super` 也視為失敗。
-- `pub(crate)` 無法限制成只有某個 module 能呼叫，所以測試另外確認三個建構函式的呼叫位置：`TemplateValues` 只在 `preflight`、`DesiredContent` 只在 `plan`、`ApprovedPlan` 只在 `apply`。`#[cfg(test)]` 的單元測試檔不在此限，§5.11 的判定等單元測試要直接建立這些值（§8.1）。依 §4 的介面，這三個型別都只有上述的建立者（§4.5、§4.12、§4.14、§4.15）。
+- `pub(crate)` 無法限制成只有某個 module 能呼叫，所以測試另外確認三個建構函式的呼叫位置：`TemplateValues` 只在 `preflight`、`DesiredContent` 只在 `plan`、`ApprovedPlan` 只在 `apply`。`#[cfg(test)]` 的單元測試檔不在此限，§5.11 的判定等單元測試要直接建立這些值（§8.1）。依 §4 的介面，這三個型別目前都只有上述的建立者（§4.5、§4.12、§4.14、§4.15）。
 
 ### 11.4 發現的問題與處理
 
@@ -3205,7 +3201,7 @@ core 另外啟用 `clippy::unwrap_used` 與 `clippy::expect_used`（§11.1）。
 
 | 編號 | 問題 | 不修改的理由 |
 | --- | --- | --- |
-| A1 | `FileSystem` 把唯讀與寫入的方法放在同一個 trait，`Planner`、`QueryService` 等唯讀的使用者也看得到寫入方法（ISP） | 一般寫入方法都要求 `&WriteLock`，唯讀的使用者不取得鎖定。鎖定準備只在 `WriteLock::acquire` 內呼叫，由 §11.3 檢查。拆成兩個 trait 後，platform 與 `FaultFs` 都要實作兩個 trait，每個服務的簽名也要選用其中一個，得到的只是文件上的區分 |
+| A1 | `FileSystem` 把唯讀與寫入的方法放在同一個 trait，`Planner`、`QueryService` 等唯讀的使用者也看得到寫入方法（ISP） | 寫入方法都要求 `&WriteLock`，唯讀的使用者拿不到鎖定，實際上無法呼叫。拆成兩個 trait 後，platform 與 `FaultFs` 都要實作兩個 trait，每個服務的簽名也要選用其中一個，得到的只是文件上的區分 |
 | A2 | `AnalysisContext` 借用八種資料，`PreflightChecker` 經由它讀取設定與值的內部（耦合面寬、Demeter） | 預檢的本質是檢查整批輸入的一致性，需要看到全部資料。呼叫者只有 `ApplyService`，借用都是唯讀的；依階段拆成不同的 context，會在三個型別重複大部分欄位 |
 | A3 | `RecoveryManager` 同時負責本批的回復與跨批次的殘留清理（SRP） | 兩者都依賴 journal 與批次目錄的格式。拆開後，這個格式就要成為兩個類別之間的公開介面，違反資訊隱藏（§4.13） |
 | A4 | `ManifestService` 持有 `StateStore`，只有 `forget` 使用（內聚） | 三個方法共用 manifest 的修改規則：以 `TomlEditor` 修改、以 `parse_manifest` 確認、依載入時的版本取代（§4.8）。把 `forget` 拆成另一個服務，就要重複這段規則 |
@@ -3213,7 +3209,7 @@ core 另外啟用 `clippy::unwrap_used` 與 `clippy::expect_used`（§11.1）。
 
 ## 12. 待定事項與交接的處理
 
-本節處理 04 §6 的待定事項（§12.1），核對 03、04 交給 05 的每一項都有對應的章節（§12.2），再列出設計與 SRS 文字之間的落差（§12.3），以及 03、04 的流程在詳細設計階段如何定案（§12.4）。第一版不修訂 SRS 的需求；§12.3 的落差由本文件的審查確認。
+本節處理 04 §6 的待定事項（§12.1），核對 03、04 交給 05 的每一項都有對應的章節（§12.2），再列出設計與 SRS 文字之間的落差（§12.3），以及與 03、04 不同的設計（§12.4）。第一版不修訂 SRS 的需求；§12.3 的落差由本文件的審查確認。
 
 ### 12.1 04 §6 的待定事項
 
@@ -3239,16 +3235,16 @@ FR-DRF-012 與 B-6 清除的是「已經沒有輸出管理的舊目標」。同�
 
 | 出處 | 項目 | 05 |
 | --- | --- | --- |
-| 03 C3 | `ComparisonMetadata` 的結構 | §5.10 |
-| 03 C3、C4，04 §2 | 期望內容或執行期參照與 `Executor` 的傳遞契約，原文不進入狀態檔 | §4.12 |
-| 03 S6 末段 | 首次套用失敗時，不撤銷整個初始化 | §4.16 後置條件；初始化尚未完成時的撤回見 §4.16 第 5 步 |
-| 03 §11 | IF-001 只實作交付範圍內的子指令；第一版延後依賴檢查 | §9.1；§1.2 |
-| [03 §12 嚴格模式與 exit code](../03-preliminary-design/uml.md#嚴格模式與-exit-code) | 嚴格模式優先，列出每個衝突的名稱與路徑 | §4.12、§4.15 第 8 步、§9.2 |
-| [03 §12 接管備份與回復快照](../03-preliminary-design/uml.md#接管備份與回復快照) | 接管備份的目錄、命名、保留期限，批次失敗後是否保留 | §5.12、§6.5 |
-| [03 §12 兩份比較基準](../03-preliminary-design/uml.md#兩份比較基準) | 比較資料的格式與演算法，以三組案例驗證 | §5.10、§5.11 |
-| [03 §12 並行與外部修改](../03-preliminary-design/uml.md#並行與外部修改) | 預檢後的外部修改；多個 rosamta 同時執行 | §6.3、§6.6；§6.7 |
-| [03 §12 路徑安全](../03-preliminary-design/uml.md#路徑安全) | 路徑正規化、大小寫、指向 home 外的連結 | §6.1、§6.2 |
-| [03 §12 停止管理與同位置新輸出](../03-preliminary-design/uml.md#停止管理與同位置新輸出) | 停止管理的內建輸出的持久化表示 | §5.13 |
+| 03 C3 末段 | `ComparisonMetadata` 的結構 | §5.10 |
+| 03 C4 資料型別末段、04 §2 | 期望內容或執行期參照與 `Executor` 的傳遞契約，原文不進入狀態檔 | §4.12 |
+| 03 S6 末段 | 首次套用失敗時，不撤銷整個初始化 | §4.16 後置條件；與 03 的差異見 §12.4 |
+| 03 §11 | IF-001 只實作交付範圍內的子指令；`DependencyChecker` 在納入依賴檢查時才建立 | §9.1；§1.2 |
+| 03 §12 第 1 項 | 嚴格模式優先，列出每個衝突的名稱與路徑 | §4.12、§4.15 第 8 步、§9.2 |
+| 03 §12 第 2 項 | 接管備份的目錄、命名、保留期限，批次失敗後是否保留 | §5.12、§6.5 |
+| 03 §12 第 3 項 | 比較資料的格式與演算法，以三組案例驗證 | §5.10、§5.11 |
+| 03 §12 第 4 項 | 預檢後的外部修改；多個 rosamta 同時執行 | §6.3、§6.6；§6.7 |
+| 03 §12 第 5 項 | 路徑正規化、大小寫、指向 home 外的連結 | §6.1、§6.2 |
+| 03 §12 第 6 項 | 停止管理的內建輸出的持久化表示 | §5.13 |
 | 04 §3.1 | 目標碰撞回報宣告位置；home 範圍；父目錄解析後超出 home | §4.6、§6.1、§6.2 |
 | 04 §3.1 | 實際讀取的來源檔位於來源目錄內 | §4.5、§6.1 |
 | 04 §3.1 | 同一路徑同時被當成一般檔案與目錄 | §4.6、§5.2、§6.2 |
@@ -3274,7 +3270,7 @@ FR-DRF-012 與 B-6 清除的是「已經沒有輸出管理的舊目標」。同�
 | 04 §6 末段 | 檔案重檢與程序協調 | §6.3、§6.6、§6.7 |
 | 04 §6 末段 | 已停止管理的內建輸出 | §5.13 |
 | 04 §6 末段 | 以原型驗證來源讀取、寫入、連結接管與回復 | §7 |
-| 04 §6 末段 | 04 §5 情境的同步點與驗收條件 | §8.5、§13 |
+| 04 §6 末段 | 06 納入 04 §5 的情境 | §8.5、§13 |
 
 ### 12.3 與 SRS 文字的落差
 
@@ -3286,33 +3282,34 @@ FR-DRF-012 與 B-6 清除的是「已經沒有輸出管理的舊目標」。同�
 - 初始化的 git clone（ASM-22）：Linux 與 macOS 上，最後一次核對後暫存目錄或上層被搬到 home 外，或 clone 進行中路徑上的目錄被換成連結時，git 寫入的檔案可能在 home 外。clone 後核對時路徑仍是改變後的狀態，才會發現，回報失敗，不刪除可能在 home 外的檔案（§4.16、§6.3）；路徑在核對之前被還原時發現不了，home 外可能留下 git 寫入的檔案。clone 開始前的連結替換不受影響（pilot P7）。Windows 依 ASM-08 持有每一層，沒有這個情況。
 - §6.3 的「剩下的空窗」：Windows 的取代，以及 Linux、macOS 不支援交換式改名的檔案系統，在最後一次核對與實際取代之間有一次系統呼叫的空窗，空窗內的替換或修改會被取代掉。這不改變寫入位置。
 
-DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）沒有外部程序介入，仍可通過。前兩處是 DC-002 在其他程式搬移或替換目錄時的行為，SRS 3.5 節的適用範圍與上述一致。外部搬移與替換的驗收涵蓋 §8.5 的 A7、A10。
+DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）沒有外部程序介入，仍可通過。前兩處是 DC-002 在其他程式搬移或替換目錄時的行為，SRS 3.5 節的適用範圍與上述一致；06 依該節與 §8.5 的 A7、A10 設計測試情境。
 
-**USE-002 的驗收條件**：需求本文成立：第一版沒有啟用互動的選項（§9.2），rosamta 永遠不進入互動模式，也就不會因標準輸入沒有連接終端機而失敗。驗收條件的第一步「啟用互動」卻無法執行。首版驗收省略這一步並執行其餘部分：把標準輸入導向 `/dev/null`（Windows 為 `NUL`）後套用，有一個 drift 衝突，確認該項目被略過、其他項目照常套用、exit code 為 2；並以 USE-001 的測試確認沒有任何子指令詢問。SRS A.3 已補註這個驗收方式。
+**USE-002 的驗收條件**：需求本文成立：第一版沒有啟用互動的選項（§9.2），rosamta 永遠不進入互動模式，也就不會因標準輸入沒有連接終端機而失敗。驗收條件的第一步「啟用互動」卻無法執行。06 去掉這一步執行其餘部分：把標準輸入導向 `/dev/null`（Windows 為 `NUL`）後套用，有一個 drift 衝突，確認該項目被略過、其他項目照常套用、exit code 為 2；並以 USE-001 的測試確認沒有任何子指令詢問。SRS A.3 已補註這個驗收方式。
 
-**FR-PLN-006 的前提**：需求的前提是「來源目錄、本機設定與目標路徑都沒有改變」，但計畫還依賴狀態檔、主機資訊（作業系統、主機名稱、環境變數、home）與本次的選項（§4.12 的 `PlanInput`）。預覽與套用執行相同的第 1–7 步、使用同一個 `Planner`（§4.15），選項轉成同一個 `Choices`（§9.2），所以這些輸入都沒有改變時，套用的項目與動作和預覽相同。驗收條件是「預覽後立即套用」，期間沒有任何輸入改變；05 把前提解讀成「計畫的所有輸入都沒有改變」，驗收時以相同的選項執行兩次。04 A2 在預覽後移除狀態檔、預期套用保留舊檔，本身就是狀態檔改變使計畫不同的例子。
+**FR-PLN-006 的前提**：需求的前提是「來源目錄、本機設定與目標路徑都沒有改變」，但計畫還依賴狀態檔、主機資訊（作業系統、主機名稱、環境變數、home）與本次的選項（§4.12 的 `PlanInput`）。預覽與套用執行相同的第 1–7 步、使用同一個 `Planner`（§4.15），選項轉成同一個 `Choices`（§9.2），所以這些輸入都沒有改變時，套用的項目與動作和預覽相同。驗收條件是「預覽後立即套用」，期間沒有任何輸入改變；05 把前提解讀成「計畫的所有輸入都沒有改變」，06 的驗收以相同的選項執行兩次。04 A2 在預覽後移除狀態檔、預期套用保留舊檔，本身就是狀態檔改變使計畫不同的例子。
 
 **其他**：
 
 - IF-001：編輯來源（FR-MAN-027）延後，沒有對應的子指令（§9.1）。IF-001 的驗收只涵蓋「第一版提供的每項操作」，03 §11 也說明只有交付範圍內的功能才需要子指令，所以這不是落差。
 - SRS A.3：§1.2 延後的 10 條 `conditional` 與 2 條 `optional` 需求，依 A.3 的規定記錄在 A.3 與修訂紀錄（SRS 1.2 版）。
 
-### 12.4 03、04 的設計演進
+### 12.4 與 03、04 不同的設計
 
-| 出處與當時的考量 | 詳細設計 | 理由 |
+類別介面與 03 C1–C4 的差異，已列在 §4 開頭的表格。其他與 03、04 不同的地方：
+
+| 03、04 | 05 | 理由 |
 | --- | --- | --- |
-| 04 §3.1 原稿允許讀取解析後是一般檔案的來源連結 | 路徑中的目錄一律不得是連結；範本與原樣複製的來源檔本身也不得是連結（§6.1） | 預檢無法分辨使用者的連結與兩次檢查之間換入的連結。代價是 `~/.config` 是連結的使用者，`target` 要寫實際的位置 |
-| 04 A14、A17 原稿要求最後一次重檢後的變更仍能在提交前阻擋 | 在 `BeforeCommit` 注入時，狀態照常提交，再由完成確認發現不符，回復原狀態（§6.6 第 5 步、§8.5） | 最後一次核對與提交之間仍可能有外部變更。完成確認失敗時，依 §6.6 核對後回復可安全處理的狀態與輸出，未能回復的項目另行回報 |
+| 04 §3.1：來源連結解析後須是一般檔案 | 路徑中的目錄一律不得是連結；範本與原樣複製的來源檔本身也不得是連結（§6.1） | 預檢無法分辨使用者的連結與兩次檢查之間換入的連結。代價是 `~/.config` 是連結的使用者，`target` 要寫實際的位置 |
+| 04 A14、A17：在最後一次重檢後、狀態替換前改動時，不提交過時的紀錄 | 在 `BeforeCommit` 注入時，狀態照常提交，再由完成確認發現不符，回復原狀態（§6.6 第 5 步、§8.5） | 提交與完成確認之間無法排除改動，只能事後發現。最終結果相同：狀態檔是原本的版本，項目不列為完成 |
 | 04 A16 第三列：擷取完成後改回原檔，仍須拒絕副本 | 這個預期依 §6.5 的複製快照成立（§8.5 末段） | 以 hard link 當快照時，改回後副本就是正確的版本；這是不用 hard link 當快照的理由之一 |
-| [03 S6](../03-preliminary-design/uml.md#10-循序圖-s6新機器初始化)：初始化的失敗邊界 | 本機設定寫入失敗時，依核對結果安全撤回遠端來源；初始化成功後的首次套用失敗保留初始化結果（§4.16） | 初始化未完成與後續套用失敗分別處理 |
-| 04 §3.1 原稿先判定與新輸出同位置的舊檔是否可清除 | 不產生清除項目，紀錄移交給新輸出（§12.1） | 同一路徑仍有輸出管理，依 drift 的規則處理，被修改的檔案同樣預設保留 |
-| 04 A11 原稿把指向保留位置的舊清除紀錄也列為整批預檢失敗 | 啟用輸出與保留位置碰撞時擋下整批；清除項目指向保留位置時只保留該項與紀錄（§4.6、§4.12、§5.11） | 兩種情況都保護保留位置。啟用輸出的目標與保留位置碰撞，即使尚未規劃寫入，也屬預檢錯誤 |
+| 03 S6：不宣稱首次套用失敗時撤銷初始化 | 首次套用失敗不撤銷；本機設定寫入失敗時，撤回已移入的遠端來源（§4.16 第 5 步） | 不撤回時，再次初始化會因 FR-INI-009 而失敗，使用者無法直接重試 |
+| 04 §3.1 末段：新輸出與待清除的舊輸出為同一路徑時，先判定舊檔可否清除 | 不產生清除項目，紀錄移交給新輸出（§12.1） | 同一路徑仍有輸出管理，依 drift 的規則處理，被修改的檔案同樣預設保留 |
 | 04 §2：停止管理與套用之間的計畫版本檢查 | 不另外實作，由鎖定排除（§6.7） | 套用取得鎖定後才規劃，不沿用預覽的計畫 |
 | 04 §3.3：回復須還原接管前的連結 | 備份是連結本身的 hard link，回復時改名回原位，不建立新的連結（§7.4） | Windows 標準使用者在未開啟開發人員模式時無法建立連結（ASM-13） |
 
-## 13. 需求追溯與驗收交接
+## 13. 需求追溯與交接 06
 
-本節把 SRS 第 3 節的每條需求對應到負責的類別或演算法（§13.1），把每個平台假設對應到 04 §5 的情境（§13.2），再列出須交接的驗收事項（§13.3）。本節說明設計中由誰負責，以及 04 §5 以外仍須驗證的條件。
+本節把 SRS 第 3 節的每條需求對應到負責的類別或演算法（§13.1），把每個平台假設對應到 04 §5 的情境（§13.2），再列出交給 06 的事項（§13.3）。測試案例依 SRS 的驗收條件撰寫，對應的案例編號由 06 填入 SRS A.4；本節只說明設計中由誰負責，以及 04 §5 以外還須安排的測試。
 
 ### 13.1 需求與負責的設計
 
@@ -3397,7 +3394,7 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 | FR-PLN-001 | `Planner` 為每個項目決定 `Action` | §4.12、§9.4 |
 | FR-PLN-002 | §5.11 的「不變」不寫入；內容或權限不同才寫 | §4.14、§5.11 |
 | FR-PLN-003 | `keep_current` 保留目前的內容，`diff` 輸出差異 | §4.12、§9.4 |
-| FR-PLN-004 | 預覽不準備或取得鎖定，其他檔案變更要求 `&WriteLock` | §4.10、§4.15、§6.7 |
+| FR-PLN-004 | 預覽不取得鎖定，寫入的方法都要求 `&WriteLock` | §4.10、§4.15、§6.7 |
 | FR-PLN-005 | 範本環境不註冊讀寫檔案或執行命令的函式 | §2.3、§4.5 |
 | FR-PLN-006 | 預覽與套用共用 `Planner` 與 `Choices`；前提的解讀見 §12.3 | §4.12、§4.15、§12.3 |
 | FR-PLN-007 | `PreflightChecker` 的三個階段，通過才建立 `ApprovedPlan` | §4.6、§4.15 |
@@ -3456,7 +3453,7 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 
 | 需求 | 負責的類別或演算法 | 05 |
 | --- | --- | --- |
-| PERF-001 | 狀態檔與比較基準的大小；依 04 §5 的 A8 量測 | §5.10 |
+| PERF-001 | 狀態檔與比較基準的大小；06 量測（A8） | §5.10 |
 | DATA-001 | 色碼型別的檢查與正規化 | §4.6、§5.5 |
 | DATA-002–004 | 內建模組的欄位與預設值；選填欄位以 `none` 傳入範本 | §2.3、§4.5、§5.6 |
 | DATA-005 | 設定目錄與狀態目錄在來源目錄以外；輸出不得寫入保留位置 | §4.6、§5.1、§5.2、§5.8 |
@@ -3487,9 +3484,9 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 
 ### 13.2 平台假設與 04 §5 的情境
 
-下表列出 §7 的平台假設與對應的 04 §5 情境。情境的預期結果成立，前提是假設成立。表中另列 04 §5 沒有涵蓋的驗收條件。
+§7 的每個平台假設，都由下表的 04 §5 情境間接驗證：情境的預期結果成立，前提是假設成立。04 §5 沒有涵蓋的部分，列在「06 另外安排」。
 
-| 假設 | 04 §5 的情境 | 其他須驗證的條件 |
+| 假設 | 04 §5 的情境 | 06 另外安排 |
 | --- | --- | --- |
 | ASM-01、ASM-02 | A6：輸出與狀態檔替換期間強制終止程序 | — |
 | ASM-03 | A13：其他帳號存取暫存檔、快照與備份 | — |
@@ -3506,7 +3503,7 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 | ASM-22 | A7：clone 前替換暫存目錄的上層（§8.5） | clone 進行中替換路徑上的目錄；HTTPS 與 SSH 的遠端（§7.8） |
 | ASM-23 | A7：撤回來源目錄前改動其中的檔案（§8.5） | 改寫內容、大小不變並還原修改時間，Linux 與 macOS 上撤回仍保留該檔案 |
 
-### 13.3 驗收交接事項
+### 13.3 交給 06 的事項
 
 **驗收方式的解讀**（§12.3）：
 
@@ -3515,18 +3512,18 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 
 **平台與環境**：
 
-- §13.2「其他須驗證的條件」一欄的各項。
+- §13.2「06 另外安排」一欄的各項。
 - PORT-001 正式支援的平台版本（§2.1、§7.1）。
 - Windows 上 git 需要帳號密碼時，Git Credential Manager 與 ssh askpass 都不等待輸入（§9.8）。
 
 **子指令的輸出**：
 
 - IF-002：在沒有來源目錄與網路的環境，每個子指令的說明都包含用途、參數、exit code 與範例（§9.9）。
-- IF-003：擷取 `diff` 未上色的 unified diff 區段，在測試 home 以 GNU `patch --binary -p1` 套用（§9.4）。
+- IF-003：`diff` 的輸出在 home 以 `patch -p1` 套用（§9.4）。
 
 **基準與量測**：
 
 - MNT-002 的回歸設定集與 MNT-003 的 JSON 範例在第一版建立，作為之後版本比對的基準（§1.2、§9.6）。
 - A8：在參考機器上量測 PERF-001；空間不足另以容量有限的檔案系統實測（§8.3）。
 
-**實作時建立**：§11.3 的 clippy 設定與 `rosamta-core/tests/architecture.rs`。兩者都隨每個 commit 執行，用來檢查 IF-013、USE-001 與 §3.2 的依賴方向。
+**實作時建立**：§11.3 的 clippy 設定與 `rosamta-core/tests/architecture.rs`。兩者都隨每個 commit 執行，不是 06 的測試案例，但 IF-013、USE-001 與 §3.2 的依賴方向以它們為檢查方式。
