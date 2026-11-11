@@ -14,6 +14,38 @@ use rustix::fs::{self, AtFlags, CWD, FileType, Mode, OFlags, Stat};
 pub(super) struct Dir(OwnedFd);
 
 impl Dir {
+    pub(super) fn enter_child_process(&self, command: &mut std::process::Command) {
+        use std::os::{
+            fd::{AsRawFd, BorrowedFd},
+            unix::process::CommandExt,
+        };
+        let fd = self.0.as_raw_fd();
+        // fchdir is async-signal-safe. The caller keeps the directory open until Git exits.
+        unsafe {
+            command.pre_exec(move || {
+                rustix::process::fchdir(BorrowedFd::borrow_raw(fd)).map_err(Into::into)
+            });
+        }
+    }
+
+    pub(super) fn publish(
+        &self,
+        staging: &OsStr,
+        destination: &OsStr,
+        identity: &str,
+    ) -> io::Result<()> {
+        if self.child(staging)?.id()? != identity {
+            return Err(io::Error::other("staging directory changed"));
+        }
+        self.rename(staging, destination, fs::RenameFlags::NOREPLACE)?;
+        if self.child(destination)?.id()? != identity {
+            self.rename(destination, staging, fs::RenameFlags::NOREPLACE)?;
+            return Err(io::Error::other(
+                "staging directory changed while publishing",
+            ));
+        }
+        Ok(())
+    }
     pub(super) fn home(path: &Path) -> io::Result<Self> {
         Ok(Self(fs::openat(
             CWD,

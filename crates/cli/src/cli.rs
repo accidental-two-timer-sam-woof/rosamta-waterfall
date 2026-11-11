@@ -9,8 +9,9 @@ use rosamta_core::{
 macro_rules! help {
     ($example:literal) => {
         concat!(
-            "Exit status:\n  0  Help or version displayed\n",
-            "  1  Invalid arguments or command unavailable in this development build\n\n",
+            "Exit status:\n  0  Command completed or help displayed\n",
+            "  1  Command failed or all deployment items were retained\n",
+            "  2  Deployment completed with retained items (apply or init)\n\n",
             "Examples:\n  rosamta ",
             $example
         )
@@ -140,16 +141,16 @@ pub(crate) struct InitArgs {
     pub repo: Option<String>,
     /// Set a custom source directory.
     #[arg(long, value_name = "DIRECTORY")]
-    source: Option<OsString>,
+    pub source: Option<OsString>,
     /// Set a local tag. May be repeated.
     #[arg(long, value_name = "TAG")]
-    tag: Vec<Tag>,
+    pub tag: Vec<Tag>,
     /// Set a local field value. May be repeated.
     #[arg(long, value_name = "MODULE.FIELD=VALUE")]
     pub set: Vec<String>,
     /// Skip the initial apply.
     #[arg(long, requires = "repo")]
-    no_apply: bool,
+    pub no_apply: bool,
     #[command(flatten)]
     pub choices: ChoicesArgs,
 }

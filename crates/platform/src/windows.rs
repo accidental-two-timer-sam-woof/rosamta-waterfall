@@ -26,6 +26,28 @@ pub(super) struct Dir {
 }
 
 impl Dir {
+    pub(super) fn enter_child_process(&self, command: &mut std::process::Command) {
+        command.current_dir(&self.path);
+    }
+
+    pub(super) fn publish(
+        &self,
+        staging: &OsStr,
+        destination: &OsStr,
+        identity: &str,
+    ) -> io::Result<()> {
+        if self.child(staging)?.id()? != identity {
+            return Err(io::Error::other("staging directory changed"));
+        }
+        move_no_replace(&self.path.join(staging), &self.path.join(destination))?;
+        if self.child(destination)?.id()? != identity {
+            move_no_replace(&self.path.join(destination), &self.path.join(staging))?;
+            return Err(io::Error::other(
+                "staging directory changed while publishing",
+            ));
+        }
+        Ok(())
+    }
     pub(super) fn home(path: &Path) -> io::Result<Self> {
         Self::open_dir(path, false)
     }

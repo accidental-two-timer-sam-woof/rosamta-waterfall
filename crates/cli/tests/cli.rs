@@ -366,3 +366,68 @@ fn add_modify_and_forget_preserve_the_target_and_existing_manifest_format() {
     .unwrap();
     assert_eq!(state["outputs"], json!([]));
 }
+
+#[test]
+fn init_merges_local_settings_and_prepares_an_empty_source() {
+    let home = temporary_home().unwrap();
+    let config = home.path().join(".config/rosamta");
+    fs::create_dir_all(&config).unwrap();
+    fs::write(
+        config.join("local.toml"),
+        "# Local settings\ntags = [\"work\"] # Keep tags\n[values.font]\nsize = 12 # Keep size\n",
+    )
+    .unwrap();
+    let result = successful(
+        &home,
+        &[
+            "init",
+            "--source",
+            "~/dotfiles",
+            "--tag",
+            "work",
+            "--tag",
+            "laptop",
+            "--set",
+            "font.family=JetBrains Mono",
+            "--set",
+            "font.size=16",
+            "--format",
+            "json",
+        ],
+    );
+    let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["result"]["source_created"], true);
+    assert_eq!(value["result"]["apply"], Value::Null);
+    assert_eq!(
+        fs::read(home.path().join("dotfiles/manifest.toml")).unwrap(),
+        b""
+    );
+    assert!(!home.path().join(".local/state/rosamta/state.json").exists());
+    let local = fs::read_to_string(config.join("local.toml")).unwrap();
+    assert!(
+        local.contains("# Local settings")
+            && local.contains("# Keep tags")
+            && local.contains("size = 16 # Keep size"),
+        "{local}"
+    );
+    let value = successful(
+        &home,
+        &["query", "value", "font.family", "--format", "json"],
+    );
+    let value: Value = serde_json::from_slice(&value.stdout).unwrap();
+    assert_eq!(value["result"]["value"], "JetBrains Mono");
+    let before = fs::read(config.join("local.toml")).unwrap();
+    let existing = run(
+        &home,
+        &[
+            "init",
+            "https://example.invalid/test",
+            "--source",
+            "~/dotfiles",
+            "--no-apply",
+        ],
+    );
+    assert_eq!(existing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&existing.stderr).contains("already exists"));
+    assert_eq!(fs::read(config.join("local.toml")).unwrap(), before);
+}

@@ -157,7 +157,7 @@ USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱
 
 ### 3.1 crate 劃分
 
-儲存庫根目錄的 `Cargo.toml` 定義 Cargo workspace。四個 crate 集中在 `crates/`，共用根目錄的 `Cargo.lock`。`crates/cli` 是預設建置與執行的成員，執行檔名稱為 `rosamta`。`prototypes/pilot/` 有獨立的工具鏈與鎖檔。下表列出第一版的依賴，骨架實際引入的套件見 §3.4。
+儲存庫根目錄的 `Cargo.toml` 定義 Cargo workspace。四個 crate 集中在 `crates/`，共用根目錄的 `Cargo.lock`。`crates/cli` 是預設建置與執行的成員，執行檔名稱為 `rosamta`。`prototypes/pilot/` 有獨立的工具鏈與鎖檔。下表列出首版的設計依賴，實作介面與差異見 §3.4。
 
 | 目錄 | Cargo 套件名稱 | 種類 | 內容 | 依賴的 workspace crate | 外部 crate |
 | --- | --- | --- | --- | --- | --- |
@@ -227,34 +227,30 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 
 `unix` 與 `windows` 以 `#[cfg]` 選擇，對外只提供同一個 `FileSystem` 實作的建構函式。
 
-### 3.4 開發骨架的實作範圍
+### 3.4 實作對照
 
-`manage::ManifestService` 實作 `add`、`modify`、`forget`。透過 `docedit::Editor` 保留 BOM、換行和既有值的 decor，並在提交前以設定解析器重新讀取 manifest。新增屬性的縮排依 toml_edit 預設，尚未複製同表最後一個鍵的縮排。`forget` 依 §5.13 先提交 `forget_pending`，再改 manifest 與清除紀錄；套用時會保留這些標記的目標。
+根目錄固定 Rust 1.99.1、rustfmt 與 Clippy，各 crate 採用 edition 2024。正式程式的 workspace 包含 `crates/cli`、`crates/core`、`crates/platform`、`crates/testkit`，pilot 仍有獨立工作區。
 
-`diff` 和 `status` 共用 `apply::analyze`。`preflight` 建立期望內容，`plan` 比對狀態的雙基準並回傳計畫。`diff` 另外用 similar 產生 unified diff。Windows 的路徑鍵目前以 Unicode 小寫比較，Linux 與 macOS 以原字串比較。檔案系統的大小寫別名、跨路徑身分與中途置換仍需依 §6 驗收。規劃目前只對一般檔案執行接管與清除，其他類型會保留。
+| 責任 | 目前的程式介面與行為 |
+| --- | --- |
+| 設定與格式說明 | `config::load`、`config::schema` 與 serde 反序列化。使用者 TOML 接受開頭的 UTF-8 BOM 並正規化 CRLF。設定結構拒絕未知鍵，格式說明的文字由 `config::schema` 維護，內建模組宣告與 `schema builtin` 共用 TOML 資源 |
+| 值、範本與查詢 | `resolve::resolve` 按四層解析值，`Template::compile`、`render` 使用 MiniJinja 3.1 的嚴格模式與 `SyntaxConfig`。查詢以檔案路徑和從 1 起算的 Profile 規則序號表示來源 |
+| 預檢、預覽與套用 | `apply::analyze` 組合期望內容、狀態與計畫。 `apply::deploy` 確認 manifest 可載入後持狀態鎖重新預檢，由 `exec::execute` 提交目標與狀態。差異使用 similar |
+| 設定檔編輯 | `manage::ManifestService` 與 `docedit::Editor` 保留 BOM、換行與既有值的 decor。新增屬性的縮排依 toml_edit 預設。 `forget` 依 §5.13 先提交 `forget_pending` |
+| 初始化 | `init::initialize` 先在來源旁的暫存目錄取得 Git 內容，寫入本機設定後以不覆蓋改名發布。若發布失敗會嘗試還原本機設定，保留暫存目錄供檢查。未指定遠端時只建立來源與本機設定，首次套用由遠端初始化呼叫共用套用流程 |
+| 平台檔案介面 | `FileSystem` 的 `inspect`、`children`、`change`、`lock` 與目錄操作由 `SystemFs` 實作。Unix 逐層以 `openat` 開啟，Windows 持有父目錄 handle。Unix 交換式替換或以暫存名稱核對後刪除，Windows 用 [ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew) 並核對留下的舊檔，刪除使用經核對的 handle |
+| 回復與備份 | `recovery::Journal` 依套用記錄反向回復，快照名稱為 `before-<項目序號>`。程序中止或回復失敗後，現有快照保留供使用者檢查。一般檔案接管會留下副本 |
+| 輸出與測試 | CLI 以 §9.6 的 JSON 外層回傳各服務結果，部份內部資料以 JSON 值承載。 `crates/cli/tests/cli.rs` 驗證實際子程序， `crates/core/tests/architecture.rs` 檢查模組依賴。workspace CI 在三平台建置並執行測試 |
 
-`apply::deploy` 先確認 manifest 可載入，再取得狀態鎖，於持鎖後重新預檢。狀態與目標以綁定的檔案操作寫入。Unix 替換使用交換式改名，Windows 使用 [ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew) 保留目標的 DACL，並核對替換留下的舊檔；刪除使用經核對的檔案 handle。若處理一般檔案時失敗，`recovery::Journal` 以本次觀測與已保存的內容反向回復。交易快照的檔名為 `before-<項目序號>`；若程序中止或回復失敗，後續套用會提示保留的交易目錄，仍需人工核對。這一版以檔案替換處理只改 Unix 權限的項目，Windows 的新目錄沿用上層 ACL。這些情況以及符號連結接管與回復仍待 §6 的完整驗收。
+實際驗收的差異如下：
 
-設定與格式說明已接上 `config` 和 `schema`。TOML 以 `toml_edit::de` 解碼，接受開頭的 UTF-8 BOM 並正規化 CRLF。未知鍵由設定型別的反序列化規則拒絕，格式說明的文字由 `config::schema` 維護。`schema builtin` 與設定載入共用同一份內建 TOML 宣告。這一階段用 JSON 值承載欄位原值、格式說明與查詢結果，CLI 保留 §9.6 的輸出外層。
+- Windows 路徑比較目前以 Unicode 小寫產生路徑鍵，Linux 與 macOS 以原字串比較。檔案系統的大小寫規則、別名與中途置換仍須依 §6 驗收。
+- 套用目前只接管和清除一般檔案，只改 Unix 權限時也走替換。Windows 替換保留現有檔案的 DACL，新目錄沿用上層 ACL。符號連結接管與專用的私有 DACL 仍待實作與驗收。
+- 語法或型別錯誤會附解析器的位置。預檢引用目前以範本路徑與欄位名稱定位，尚未對所有語意錯誤附行、欄及修正提示。CLI 診斷以共用代碼回報各階段失敗。
+- 遠端初始化失敗後只自動移除空的暫存目錄，仍有資料的暫存目錄會保留並附路徑。程序中止後尚無依 §6.5 自動清理暫存檔的流程。
+- `help` 子指令的 `--format` 放在 `help` 前，輸出為文字。一般子指令接受前後兩種位置。
 
-`config::load` 從受限於 home 的檔案介面讀取 manifest、模組、Profile 與本機設定。`resolve` 按四層解析值，`query` 直接使用解析結果及 MiniJinja 引用。查詢的 `enabled_by` 和 `rule` 目前使用從 1 開始的 Profile 規則序號，來源位置使用檔案路徑。TOML 語法與型別錯誤另帶解析器提供的行、欄。平台由 `hostname` 收集名稱，Windows 以持有的目錄 handle 防止父目錄遭替換，Unix 以 `openat` 逐層讀取。MiniJinja 3.1 的結尾換行選項透過 `SyntaxConfig` 設定。
-
-根目錄以 `rust-toolchain.toml` 固定 Rust 1.99.1、rustfmt 與 Clippy，各成員採用 edition 2024，宣告最低 Rust 1.99。
-
-| 位置 | 此階段已接上的功能 | 下一階段銜接點 |
-| --- | --- | --- |
-| `crates/cli` | clap 指令樹、`--help`、`help`、`--version`、基本參數檢查、文字與 JSON 診斷 | 在 `run` 建立 platform 與 core 服務，逐個接上子指令 |
-| `crates/core` | §3.2 的 module 分層、名稱與欄位引用型別、模組或欄位的查詢參數、基本診斷 | 在對應 module 加入 §4 的設定型別、I/O trait 與服務 |
-| `crates/platform` | Linux／macOS 與 Windows 的 `cfg` 入口，以及 `host`、`git` 的 module 位置 | 實作主機資訊、以 handle 為基準的檔案操作與 Git 程序介面 |
-| `crates/testkit` | 測試用暫存 home 與子程序環境，供 CLI integration test 使用 | 隨 core 的 trait 補上同步點與故障注入 |
-
-骨架鎖定 clap 4.6.7、serde 1.0.229、serde_json 1.0.154，testkit 使用 tempfile 3.27.0，core 的架構測試使用 syn 3.0.10。其餘 §3.1 的套件在對應功能接上時引入。名稱檢查採用 §4.1 的規則。目前診斷只含 `severity`、`code` 與 `message`，來源位置、警告及 `Reported` 隨設定載入與服務介面加入。
-
-`run` 目前對尚未接上服務的指令回報 `cli.not-implemented`，包括 `schema`。通過參數解析後一律回傳 `1`，也不讀取或修改本機設定、來源、狀態與目標檔案。`--format json` 使用 §9.6 的外層欄位，`result` 為 `null`，診斷另送到標準錯誤。clap 參數錯誤採文字輸出。使用 clap 產生的 `help` 子指令時，`--format` 須放在 `help` 前面，輸出仍為文字。已檢查名稱、欄位引用、`--set` 左側格式與不相容的參數組合。路徑正規化、TOML 值轉換、主機資訊、色彩及 §9.5 的 panic hook 隨對應功能實作。
-
-`crates/cli/tests/cli.rs` 驗證空白 home 的說明、參數錯誤、exit code、輸出串流與 home 沒有被寫入。`crates/core/tests/architecture.rs` 檢查 module 與 `crate::` 依賴方向；§11.3 的建構函式限制會在相應型別加入時一併檢查。`.github/workflows/workspace.yml` 在三平台執行格式檢查、Clippy 與 workspace 測試。標準使用者與平台檔案操作的驗收見 §7–§8，現有 pilot 使用獨立流程。
-
-使用者可執行的指令及建置方式記在[07 操作手冊](../07-user-manual/user-manual.md)。實作改變介面、資料格式或行為時，請在同一個 PR 更新 05 的對應章節與圖。
+使用者可執行的指令見[第 07 份操作手冊](../07-user-manual/user-manual.md)。實作改變介面、資料格式或行為時，請在同一批提交更新 05 的對應章節及受影響的圖。
 
 ## 4. 類別詳細規格
 
@@ -2802,7 +2798,7 @@ A16 第三列的預期依 §6.5 的快照方式而定：快照是邊讀邊計算
 
 IF-001 的每項操作是 `rosamta` 的一個子指令。預覽、摘要與套用沿用 git 與 chezmoi 的 `diff`、`status`、`apply`（SRS §3.1.1）。
 
-下表是第一版的指令與服務對應。骨架目前的執行行為見 §3.4。
+下表是第一版的指令與服務對應。實作介面與差異見 §3.4。
 
 | 子指令 | SRS 的操作 | 鎖定（§6.7） | 呼叫 |
 | --- | --- | --- | --- |

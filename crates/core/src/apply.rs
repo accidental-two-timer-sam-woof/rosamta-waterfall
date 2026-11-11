@@ -5,10 +5,12 @@ use crate::{
     fs::FileSystem,
     host::HostContext,
     layout::Layout,
-    plan::{self, Choices, DesiredSet, Plan},
+    plan::{self, DesiredSet, Plan},
     preflight, resolve,
     state::State,
 };
+
+pub use crate::plan::Choices;
 
 pub struct Analysis {
     pub layout: Layout,
@@ -16,18 +18,29 @@ pub struct Analysis {
     pub plan: Plan,
 }
 
+pub type Deployment = Result<(Analysis, crate::exec::Report), Vec<String>>;
+
 pub fn deploy(
     fs: &dyn FileSystem,
     host: &HostContext,
     choices: &Choices,
     batch: &str,
-) -> Result<(Analysis, crate::exec::Report), Vec<String>> {
+) -> Deployment {
     let (layout, _) = crate::config::load::load_layout(fs, host).map_err(|error| vec![error])?;
     crate::config::load::load_manifest(fs, &layout).map_err(|error| vec![error])?;
     let lock = layout.state.join("lock").map_err(|error| vec![error])?;
     let _lock = fs
         .lock(&lock)
         .map_err(|error| vec![format!("{lock}: {error}")])?;
+    execute_locked(fs, host, choices, batch)
+}
+
+pub(crate) fn execute_locked(
+    fs: &dyn FileSystem,
+    host: &HostContext,
+    choices: &Choices,
+    batch: &str,
+) -> Deployment {
     let mut analysis = analyze(fs, host, choices)?;
     if let Ok(path) = analysis.layout.state.join("txn")
         && let Ok(entries) = fs.children(&path)

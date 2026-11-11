@@ -17,7 +17,6 @@ impl Severity {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagCode {
-    CommandUnavailable,
     InvalidConfig,
     UnknownOutput,
     QueryFailed,
@@ -26,12 +25,12 @@ pub enum DiagCode {
     ExecuteFailed,
     RecoveryFailed,
     ManageFailed,
+    InitFailed,
 }
 
 impl DiagCode {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::CommandUnavailable => "cli.not-implemented",
             Self::InvalidConfig => "config.invalid",
             Self::UnknownOutput => "config.unknown-output",
             Self::QueryFailed => "query.failed",
@@ -40,6 +39,7 @@ impl DiagCode {
             Self::ExecuteFailed => "exec.failed",
             Self::RecoveryFailed => "recovery.failed",
             Self::ManageFailed => "manage.failed",
+            Self::InitFailed => "init.failed",
         }
     }
 }

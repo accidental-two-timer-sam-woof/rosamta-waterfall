@@ -19,11 +19,28 @@ impl Layout {
                     .map_err(|error| format!("{key}: {error}")),
             }
         }
-        Ok(Self {
+        let layout = Self {
             config: directory(host, "XDG_CONFIG_HOME", ".config/rosamta")?,
             source: directory(host, "XDG_DATA_HOME", ".local/share/rosamta")?,
             state: directory(host, "XDG_STATE_HOME", ".local/state/rosamta")?,
-        })
+        };
+        layout.validate(host)?;
+        Ok(layout)
+    }
+
+    pub fn validate(&self, host: &HostContext) -> Result<(), String> {
+        for (left, right) in [
+            (&self.source, &self.state),
+            (&self.source, &self.config),
+            (&self.state, &self.config),
+        ] {
+            if left.starts_with(right, host.platform) || right.starts_with(left, host.platform) {
+                return Err(format!(
+                    "{left} overlaps {right}; source, configuration and state must use separate directories"
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn reserved(&self, target: &HomePath, host: &HostContext) -> bool {

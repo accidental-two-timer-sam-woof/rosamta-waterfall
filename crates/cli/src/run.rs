@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use crate::{
     args,
-    cli::{ChoicesArgs, Cli, Command, Format, Query, Schema},
+    cli::{ChoicesArgs, Cli, Command, Format, InitArgs, Query, Schema},
     output::{json, plan, text},
 };
 
@@ -37,13 +37,7 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
             matches!(cli.command, Command::Diff(_)),
             &mut diagnostics,
         ),
-        _ => {
-            diagnostics.error(
-                DiagCode::CommandUnavailable,
-                format!("`{command}` is unavailable in this development build"),
-            );
-            None
-        }
+        Command::Init(options) => initialize(options, &mut diagnostics, &mut exit_code),
     };
     let code = exit_code.unwrap_or_else(|| u8::from(result.is_none() || diagnostics.has_errors()));
 
@@ -69,6 +63,83 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
     }
 
     ExitCode::from(code)
+}
+
+fn initialize(
+    options: &InitArgs,
+    diagnostics: &mut Diagnostics,
+    code: &mut Option<u8>,
+) -> Option<(Value, String)> {
+    use rosamta_core::{
+        init::{self, Request},
+        path::HomePath,
+    };
+    use serde_json::json;
+    let host = report(host::collect(), diagnostics)?;
+    let fs = report(SystemFs::open(&host.home), diagnostics)?;
+    let cwd = report(env::current_dir(), diagnostics)?;
+    let source = report(
+        options
+            .source
+            .as_ref()
+            .map(|path| HomePath::argument(path, &host, &cwd))
+            .transpose(),
+        diagnostics,
+    )?;
+    let apply = if options.repo.is_some() && !options.no_apply {
+        Some(report(
+            args::choices(&options.choices, &host, &cwd),
+            diagnostics,
+        )?)
+    } else {
+        None
+    };
+    let batch = report(batch_id(), diagnostics)?;
+    let result = init::initialize(
+        &fs,
+        &fs,
+        &host,
+        Request {
+            repo: options.repo.as_deref(),
+            source,
+            tags: &options.tag,
+            values: &options.set,
+            apply,
+            batch: &batch,
+        },
+    )
+    .map_err(|error| diagnostics.error(DiagCode::InitFailed, error))
+    .ok()?;
+    let mut lines = vec![format!("Source directory: {}", result.source)];
+    lines.extend(
+        result
+            .changes
+            .iter()
+            .map(|(path, kind)| format!("{kind:<8} {path}")),
+    );
+    let apply = match result.apply {
+        Some(Ok((analysis, result))) => {
+            report_apply(&analysis, &result, diagnostics);
+            *code = Some(result.exit_code());
+            let (value, text) = plan::applied(&analysis.plan, &host, &result);
+            if !text.is_empty() {
+                lines.push(text);
+            }
+            Some(value)
+        }
+        Some(Err(errors)) => {
+            for error in errors {
+                diagnostics.error(DiagCode::PreflightFailed, error);
+            }
+            None
+        }
+        None => None,
+    };
+    Some((
+        json!({"source": result.source.to_absolute(&host), "source_created": result.source_created, "apply": apply,
+        "changes": result.changes.iter().map(|(path, kind)| json!({"path": path.to_absolute(&host), "kind": kind})).collect::<Vec<_>>() }),
+        lines.join("\n"),
+    ))
 }
 
 fn manage(command: &Command, diagnostics: &mut Diagnostics) -> Option<(Value, String)> {

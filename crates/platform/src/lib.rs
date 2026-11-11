@@ -99,6 +99,31 @@ impl FileSystem for SystemFs {
         chain.last().unwrap_or(&self.root).mkdir(OsStr::new(name))
     }
 
+    fn publish_directory(
+        &self,
+        staging: &HomePath,
+        identity: &str,
+        destination: &HomePath,
+    ) -> io::Result<()> {
+        fn split(path: &str) -> (&str, &str) {
+            path.rsplit_once('/').unwrap_or(("", path))
+        }
+        let (staging_parent, staging_name) = split(staging.as_str());
+        let (destination_parent, destination_name) = split(destination.as_str());
+        if staging_parent != destination_parent {
+            return Err(io::Error::other(
+                "staging and destination must share a directory",
+            ));
+        }
+        let chain = self.chain(staging_parent)?;
+        let parent = chain.last().unwrap_or(&self.root);
+        parent.publish(
+            OsStr::new(staging_name),
+            OsStr::new(destination_name),
+            identity,
+        )
+    }
+
     fn remove_empty_directory(&self, path: &HomePath) -> io::Result<()> {
         let (parts, name) = path
             .as_str()

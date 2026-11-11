@@ -45,6 +45,13 @@ pub trait FileSystem {
 
     fn create_directory(&self, path: &HomePath) -> io::Result<()>;
     fn remove_empty_directory(&self, path: &HomePath) -> io::Result<()>;
+
+    fn publish_directory(
+        &self,
+        staging: &HomePath,
+        identity: &str,
+        destination: &HomePath,
+    ) -> io::Result<()>;
     fn inspect(&self, path: &HomePath) -> io::Result<Option<Entry>>;
     fn children(&self, path: &HomePath) -> io::Result<Vec<String>>;
 
