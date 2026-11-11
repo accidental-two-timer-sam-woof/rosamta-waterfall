@@ -1,0 +1,86 @@
+[modules.theme]
+version = 1
+
+[modules.theme.fields.foreground]
+type = "color"
+required = true
+default = "#e5e5e5"
+description = "Foreground color"
+
+[modules.theme.fields.background]
+type = "color"
+required = true
+default = "#000000"
+description = "Background color"
+
+[modules.theme.fields.cursor]
+type = "color"
+description = "Cursor color"
+
+[modules.theme.fields.ansi]
+type = "list"
+items = { type = "color" }
+min_items = 16
+max_items = 16
+required = true
+default = ["#000000", "#cd0000", "#00cd00", "#cdcd00", "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5", "#7f7f7f", "#ff0000", "#00ff00", "#ffff00", "#5c5cff", "#ff00ff", "#00ffff", "#ffffff"]
+description = "ANSI palette"
+
+[modules.theme.fields.opacity]
+type = "decimal"
+min = 0
+max = 1
+description = "Background opacity"
+
+[modules.font]
+version = 1
+
+[modules.font.fields.family]
+type = "string"
+description = "Font family"
+
+[modules.font.fields.size]
+type = "decimal"
+min = 1
+max = 200
+description = "Font size"
+
+[modules.shellrc]
+version = 1
+
+[modules.shellrc.fields.env]
+type = "map"
+keys = "identifier"
+values = { type = "string" }
+description = "Environment variables"
+
+[modules.shellrc.fields.aliases]
+type = "map"
+keys = "word"
+values = { type = "string" }
+description = "Shell aliases"
+
+[modules.shellrc.fields.path]
+type = "list"
+items = { type = "string" }
+description = "PATH entries"
+
+[modules.terminal]
+version = 1
+
+[modules.terminal.fields.cursor_shape]
+type = "enum"
+options = ["block", "beam", "underline"]
+description = "Cursor shape"
+
+[modules.terminal.fields.scrollback]
+type = "integer"
+min = 0
+max = 100000
+description = "Scrollback lines"
+
+[modules.terminal.fields.keybindings]
+type = "map"
+keys = "word"
+values = { type = "enum", options = ["copy", "paste", "new_tab", "close_tab", "next_tab", "previous_tab", "increase_font_size", "decrease_font_size", "reset_font_size"] }
+description = "Keyboard shortcuts"

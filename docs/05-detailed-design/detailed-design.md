@@ -229,6 +229,8 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 
 ### 3.4 開發骨架的實作範圍
 
+設定與格式說明已接上 `config` 和 `schema`。TOML 以 `toml_edit::de` 解碼，接受開頭的 UTF-8 BOM 並正規化 CRLF。未知鍵由設定型別的反序列化規則拒絕，格式說明的文字由 `config::schema` 維護。`schema builtin` 與設定載入共用同一份內建 TOML 宣告。這一階段用 JSON 值承載欄位原值與格式說明結果，CLI 保留 §9.6 的輸出外層。
+
 根目錄以 `rust-toolchain.toml` 固定 Rust 1.99.1、rustfmt 與 Clippy，各成員採用 edition 2024，宣告最低 Rust 1.99。
 
 | 位置 | 此階段已接上的功能 | 下一階段銜接點 |

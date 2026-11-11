@@ -2,7 +2,7 @@
 
 ## 1. 建置
 
-目前提供開發版的 CLI 說明與參數檢查。建置前請準備 `rustup` 和平台的連結工具。Windows 使用 MSVC 工具鏈，需要 Visual Studio Build Tools 的 C++ 建置工具與 Windows SDK。第一次建置會下載 `rust-toolchain.toml` 指定的 Rust 1.99.1 與鎖檔中的套件。
+建置前請準備 `rustup` 和平台的連結工具。Windows 使用 MSVC 工具鏈，需要 Visual Studio Build Tools 的 C++ 建置工具與 Windows SDK。第一次建置會下載 `rust-toolchain.toml` 指定的 Rust 1.99.1 與鎖檔中的套件。
 
 在儲存庫根目錄執行：
 
@@ -39,6 +39,8 @@ cargo run --locked -- schema manifest --help
 | `0` | 已顯示說明或版本資訊，輸出到標準輸出 |
 | `1` | 參數有誤，或指令尚未接上服務，診斷送到標準錯誤 |
 
-除了說明和版本資訊，執行指令時目前會收到 `cli.not-implemented`，包含 `init`、`apply` 和 `schema manifest`。這些指令目前不會建立來源目錄、執行 Git 或寫入 dotfile。
+`schema` 可在離線、尚未初始化的環境執行。用 `rosamta schema manifest` 查看鍵名、型別、預設值和範例。`rosamta schema builtin theme` 會列出配色模組的欄位。`schema module`、`schema profile`、`schema local` 分別列出其他三種設定格式。
+
+尚未接上服務的指令會回傳 `cli.not-implemented`，例如 `init` 和 `apply`。
 
 需要檢查 JSON 輸出時，可以執行 `cargo run --locked -- apply --format json`。請預期 exit code 為 `1`。`rosamta` 的標準輸出是一份含 `"result": null` 的 JSON，標準錯誤另有一行 JSON 診斷。參數錯誤、說明和版本資訊使用文字輸出。使用 `help` 子指令時，`--format` 放在 `help` 前面。要分開擷取 `rosamta` 的兩個串流，請直接執行建置後的二進位檔，避開 Cargo 的建置訊息。

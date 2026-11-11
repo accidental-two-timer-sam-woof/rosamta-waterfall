@@ -16,12 +16,14 @@ impl Severity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagCode {
     CommandUnavailable,
+    InvalidConfig,
 }
 
 impl DiagCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::CommandUnavailable => "cli.not-implemented",
+            Self::InvalidConfig => "config.invalid",
         }
     }
 }

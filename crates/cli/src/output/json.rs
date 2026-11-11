@@ -4,11 +4,11 @@ use rosamta_core::diag::{Diagnostic, Diagnostics};
 use serde::Serialize;
 
 #[derive(Serialize)]
-struct FailedCommand<'a> {
+struct CommandResult<'a> {
     json_version: u8,
     command: &'a str,
     exit_code: u8,
-    result: Option<()>,
+    result: Option<&'a serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -40,13 +40,15 @@ pub(crate) fn write(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
     command: &str,
+    exit_code: u8,
+    result: Option<&serde_json::Value>,
     diagnostics: &Diagnostics,
 ) -> io::Result<()> {
-    let result = FailedCommand {
+    let result = CommandResult {
         json_version: 1,
         command,
-        exit_code: 1,
-        result: None,
+        exit_code,
+        result,
     };
     serde_json::to_writer(&mut *stdout, &result)?;
     writeln!(stdout)?;

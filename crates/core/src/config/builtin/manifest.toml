@@ -1,0 +1,19 @@
+[outputs.ghostty]
+template = "builtin:ghostty"
+target.linux = "~/.config/ghostty/config"
+target.macos = "~/.config/ghostty/config"
+
+[outputs.alacritty]
+template = "builtin:alacritty"
+target.linux = "~/.config/alacritty/alacritty.toml"
+target.macos = "~/.config/alacritty/alacritty.toml"
+target.windows = "${APPDATA}/alacritty/alacritty.toml"
+
+[outputs.posix-shell]
+template = "builtin:posix-shell"
+target.linux = "~/.config/shell/rosamta.sh"
+target.macos = "~/.config/shell/rosamta.sh"
+
+[outputs.powershell]
+template = "builtin:powershell"
+target.windows = "~/Documents/PowerShell/rosamta.ps1"
