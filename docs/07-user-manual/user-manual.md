@@ -45,6 +45,10 @@ cargo run --locked -- schema manifest --help
 
 `rosamta diff` 顯示每個目標的動作和文字差異，`rosamta status` 只列出有變更或需處理的項目。兩者都可加上 `--strict` 模擬嚴格模式。預覽和摘要不會寫入目標或狀態檔。
 
-尚未接上服務的指令會回傳 `cli.not-implemented`，例如 `init` 和 `apply`。
+`rosamta apply` 套用目前的設定。若目標已被外部修改，預設保留該檔案。可用 `--accept '~/路徑'` 記下外部修改而不改寫來源，或用 `--overwrite '~/路徑'` 寫回設定產生的內容。`--strict` 在有 drift 時阻擋整批套用。一般檔案宣告 `takeover = true` 後，接管時會在狀態目錄的 `backups/` 保留原檔副本。
+
+套用成功回傳 `0`，同時有完成與保留的項目回傳 `2`，失敗或全數保留回傳 `1`。如果診斷提到交易快照保留在 `txn/`，請先檢查診斷所列的路徑與備份。
+
+尚未接上服務的指令會回傳 `cli.not-implemented`，例如 `init`。
 
 需要檢查 JSON 輸出時，可以執行 `cargo run --locked -- apply --format json`。請預期 exit code 為 `1`。`rosamta` 的標準輸出是一份含 `"result": null` 的 JSON，標準錯誤另有一行 JSON 診斷。參數錯誤、說明和版本資訊使用文字輸出。使用 `help` 子指令時，`--format` 放在 `help` 前面。要分開擷取 `rosamta` 的兩個串流，請直接執行建置後的二進位檔，避開 Cargo 的建置訊息。

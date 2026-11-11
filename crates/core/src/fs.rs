@@ -32,6 +32,19 @@ pub struct Entry {
 }
 
 pub trait FileSystem {
+    fn lock(&self, path: &HomePath) -> io::Result<Box<dyn WriteLock>>;
+
+    /// Change a regular file only if its observed state still matches.
+    /// A missing replacement deletes the observed file.
+    fn change(
+        &self,
+        path: &HomePath,
+        expected: Option<&Entry>,
+        replacement: Option<Replacement<'_>>,
+    ) -> io::Result<Option<Entry>>;
+
+    fn create_directory(&self, path: &HomePath) -> io::Result<()>;
+    fn remove_empty_directory(&self, path: &HomePath) -> io::Result<()>;
     fn inspect(&self, path: &HomePath) -> io::Result<Option<Entry>>;
     fn children(&self, path: &HomePath) -> io::Result<Vec<String>>;
 
@@ -46,3 +59,10 @@ pub trait FileSystem {
         }
     }
 }
+
+pub struct Replacement<'a> {
+    pub bytes: &'a [u8],
+    pub mode: Option<u32>,
+}
+
+pub trait WriteLock {}

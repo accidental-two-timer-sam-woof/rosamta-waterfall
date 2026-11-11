@@ -16,6 +16,39 @@ pub struct Analysis {
     pub plan: Plan,
 }
 
+pub fn deploy(
+    fs: &dyn FileSystem,
+    host: &HostContext,
+    choices: &Choices,
+    batch: &str,
+) -> Result<(Analysis, crate::exec::Report), Vec<String>> {
+    let (layout, _) = crate::config::load::load_layout(fs, host).map_err(|error| vec![error])?;
+    crate::config::load::load_manifest(fs, &layout).map_err(|error| vec![error])?;
+    let lock = layout.state.join("lock").map_err(|error| vec![error])?;
+    let _lock = fs
+        .lock(&lock)
+        .map_err(|error| vec![format!("{lock}: {error}")])?;
+    let mut analysis = analyze(fs, host, choices)?;
+    if let Ok(path) = analysis.layout.state.join("txn")
+        && let Ok(entries) = fs.children(&path)
+        && !entries.is_empty()
+    {
+        analysis.plan.warnings.push(format!(
+            "{path}: previous transaction snapshots remain; inspect them before removal"
+        ));
+    }
+    let report = crate::exec::execute(
+        fs,
+        host.platform,
+        &analysis.layout,
+        &analysis.state,
+        &analysis.plan,
+        batch,
+    )
+    .map_err(|error| vec![error])?;
+    Ok((analysis, report))
+}
+
 pub fn analyze(
     fs: &dyn FileSystem,
     host: &HostContext,

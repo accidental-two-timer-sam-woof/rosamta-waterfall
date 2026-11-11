@@ -22,11 +22,13 @@ use crate::{
 pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> ExitCode {
     let command = cli.command.name();
     let mut diagnostics = Diagnostics::default();
+    let mut exit_code = None;
     let result = match &cli.command {
         Command::Schema(schema) => describe(schema)
             .map_err(|error| diagnostics.error(DiagCode::InvalidConfig, error))
             .ok(),
         Command::List | Command::Query(_) => inspect(&cli.command, &mut diagnostics),
+        Command::Apply(args) => deploy(args, &mut diagnostics, &mut exit_code),
         Command::Diff(args) | Command::Status(args) => preview(
             args,
             matches!(cli.command, Command::Diff(_)),
@@ -40,7 +42,7 @@ pub(crate) fn run(cli: Cli, mut stdout: impl Write, mut stderr: impl Write) -> E
             None
         }
     };
-    let code = u8::from(result.is_none() || diagnostics.has_errors());
+    let code = exit_code.unwrap_or_else(|| u8::from(result.is_none() || diagnostics.has_errors()));
 
     let output = match cli.format {
         Format::Text => {
@@ -70,6 +72,62 @@ fn report<T>(result: Result<T, impl ToString>, diagnostics: &mut Diagnostics) ->
     result
         .map_err(|error| diagnostics.error(DiagCode::InvalidConfig, error.to_string()))
         .ok()
+}
+
+fn batch_id() -> Result<String, time::error::Format> {
+    use time::{OffsetDateTime, macros::format_description};
+    OffsetDateTime::now_utc().format(format_description!(
+        "[year][month][day]T[hour][minute][second]Z"
+    ))
+}
+
+fn deploy(
+    options: &ChoicesArgs,
+    diagnostics: &mut Diagnostics,
+    code: &mut Option<u8>,
+) -> Option<(Value, String)> {
+    let host = report(host::collect(), diagnostics)?;
+    let fs = report(SystemFs::open(&host.home), diagnostics)?;
+    let cwd = report(env::current_dir(), diagnostics)?;
+    let choices = report(args::choices(options, &host, &cwd), diagnostics)?;
+    let batch = report(batch_id(), diagnostics)?;
+    let (analysis, result) = apply::deploy(&fs, &host, &choices, &batch)
+        .map_err(|errors| {
+            for error in errors {
+                diagnostics.error(DiagCode::PreflightFailed, error);
+            }
+        })
+        .ok()?;
+    *code = Some(result.exit_code());
+    report_apply(&analysis, &result, diagnostics);
+    Some(plan::applied(&analysis.plan, &host, &result))
+}
+
+fn report_apply(
+    analysis: &apply::Analysis,
+    result: &rosamta_core::exec::Report,
+    diagnostics: &mut Diagnostics,
+) {
+    for warning in analysis.plan.warnings.iter().chain(&result.warnings) {
+        diagnostics.warning(DiagCode::ApplyWarning, warning);
+    }
+    if let Some(failure) = &result.failure {
+        let recovery = if result.restored {
+            "; completed changes were rolled back"
+        } else {
+            ""
+        };
+        diagnostics.error(
+            DiagCode::ExecuteFailed,
+            format!("{}: {}{recovery}", failure.path, failure.message),
+        );
+    }
+    for failure in &result.recovery {
+        diagnostics.error(
+            DiagCode::RecoveryFailed,
+            format!("{}: {}", failure.path, failure.reason),
+        );
+    }
 }
 
 fn preview(

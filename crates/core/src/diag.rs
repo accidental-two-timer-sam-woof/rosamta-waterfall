@@ -23,6 +23,8 @@ pub enum DiagCode {
     QueryFailed,
     PreflightFailed,
     ApplyWarning,
+    ExecuteFailed,
+    RecoveryFailed,
 }
 
 impl DiagCode {
@@ -34,6 +36,8 @@ impl DiagCode {
             Self::QueryFailed => "query.failed",
             Self::PreflightFailed => "preflight.failed",
             Self::ApplyWarning => "apply.warning",
+            Self::ExecuteFailed => "exec.failed",
+            Self::RecoveryFailed => "recovery.failed",
         }
     }
 }

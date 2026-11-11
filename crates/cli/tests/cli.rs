@@ -58,12 +58,12 @@ fn help_and_version_work_in_an_empty_home() {
 }
 
 #[test]
-fn unavailable_commands_report_failure_without_writing_to_home() {
+fn missing_configuration_reports_failure_without_writing_to_home() {
     let home = temporary_home().unwrap();
     let output = run(&home, &["apply"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("error[cli.not-implemented]"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("error[preflight.failed]"));
 
     for args in [["--format", "json", "apply"], ["apply", "--format", "json"]] {
         let output = run(&home, &args);
@@ -74,7 +74,7 @@ fn unavailable_commands_report_failure_without_writing_to_home() {
             json!({"json_version": 1, "command": "apply", "exit_code": 1, "result": null})
         );
         let diagnostic: Value = serde_json::from_slice(&output.stderr).unwrap();
-        assert_eq!(diagnostic["code"], "cli.not-implemented");
+        assert_eq!(diagnostic["code"], "preflight.failed");
         assert_eq!(diagnostic["severity"], "error");
         assert!(output.stdout.ends_with(b"\n"));
         assert!(output.stderr.ends_with(b"\n"));
@@ -238,4 +238,96 @@ fn preview_renders_templates_and_rejects_colliding_targets_without_writes() {
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("target ~/.sample"));
     assert!(!home.path().join(".sample").exists());
+}
+
+fn deployment_fixture(home: &TempHome) -> std::path::PathBuf {
+    let source = home.path().join(".local/share/rosamta");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("manifest.toml"), "[outputs.first]\ncopy = \"contents\"\ntarget = \"~/a.txt\"\n[outputs.second]\ncopy = \"contents\"\ntarget = \"~/z.txt\"\n").unwrap();
+    fs::write(
+        source.join("profile.toml"),
+        "[[rules]]\nenable = [\"first\", \"second\"]\n",
+    )
+    .unwrap();
+    fs::write(source.join("contents"), "first\n").unwrap();
+    source
+}
+
+fn successful(home: &TempHome, args: &[&str]) -> Output {
+    let output = run(home, args);
+    assert!(
+        output.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+#[test]
+fn apply_tracks_drift_and_accepts_it_without_changing_the_source() {
+    let home = temporary_home().unwrap();
+    let source = deployment_fixture(&home);
+    let out = successful(&home, &["apply", "--format", "json"]);
+    let applied: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(applied["result"]["items"][0]["action"], "create");
+    let target = home.path().join("a.txt");
+    let state = home.path().join(".local/state/rosamta/state.json");
+    let before = fs::read(&state).unwrap();
+    successful(&home, &["apply"]);
+    assert_eq!(before, fs::read(&state).unwrap());
+    fs::write(&target, "manual\n").unwrap();
+    assert_eq!(run(&home, &["apply", "--strict"]).status.code(), Some(1));
+    assert_eq!(run(&home, &["apply"]).status.code(), Some(2));
+    successful(&home, &["apply", "--accept", "~/a.txt"]);
+    assert_eq!(fs::read_to_string(&target).unwrap(), "manual\n");
+    assert_eq!(
+        fs::read_to_string(source.join("contents")).unwrap(),
+        "first\n"
+    );
+    let value: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+    assert_ne!(
+        value["outputs"][0]["observed"],
+        value["outputs"][0]["desired"]
+    );
+    fs::write(source.join("contents"), "new desired\n").unwrap();
+    successful(&home, &["apply"]);
+    assert_eq!(fs::read_to_string(&target).unwrap(), "new desired\n");
+    fs::write(
+        source.join("profile.toml"),
+        "[[rules]]\nenable = [\"second\"]\n",
+    )
+    .unwrap();
+    successful(&home, &["apply"]);
+    assert!(!target.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn apply_rolls_back_earlier_updates_when_a_later_target_is_busy() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let home = temporary_home().unwrap();
+    let source = deployment_fixture(&home);
+    successful(&home, &["apply"]);
+    let state = home.path().join(".local/state/rosamta/state.json");
+    let before = fs::read(&state).unwrap();
+    fs::write(source.join("contents"), "second\n").unwrap();
+    let _blocked = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(home.path().join("z.txt"))
+        .unwrap();
+    let output = run(&home, &["apply", "--format", "json"]);
+    assert_eq!(output.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["result"]["items"][0]["status"], "reverted", "{value}");
+    assert_eq!(value["result"]["items"][1]["status"], "failed");
+    assert_eq!(
+        fs::read_to_string(home.path().join("a.txt")).unwrap(),
+        "first\n"
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join("z.txt")).unwrap(),
+        "first\n"
+    );
+    assert_eq!(fs::read(&state).unwrap(), before);
 }

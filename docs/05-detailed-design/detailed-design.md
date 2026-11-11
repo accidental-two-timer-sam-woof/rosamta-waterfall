@@ -231,6 +231,8 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 
 `diff` 和 `status` 共用 `apply::analyze`。`preflight` 建立期望內容，`plan` 比對狀態的雙基準並回傳計畫。`diff` 另外用 similar 產生 unified diff。Windows 的路徑鍵目前以 Unicode 小寫比較，Linux 與 macOS 以原字串比較。檔案系統的大小寫別名、跨路徑身分與中途置換仍需依 §6 驗收。規劃目前只對一般檔案執行接管與清除，其他類型會保留。
 
+`apply::deploy` 先確認 manifest 可載入，再取得狀態鎖，於持鎖後重新預檢。狀態與目標以綁定的檔案操作寫入。Unix 替換使用交換式改名，Windows 使用 [ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew) 保留目標的 DACL，並核對替換留下的舊檔；刪除使用經核對的檔案 handle。若處理一般檔案時失敗，`recovery::Journal` 以本次觀測與已保存的內容反向回復。交易快照的檔名為 `before-<項目序號>`；若程序中止或回復失敗，後續套用會提示保留的交易目錄，仍需人工核對。這一版以檔案替換處理只改 Unix 權限的項目，Windows 的新目錄沿用上層 ACL。這些情況以及符號連結接管與回復仍待 §6 的完整驗收。
+
 設定與格式說明已接上 `config` 和 `schema`。TOML 以 `toml_edit::de` 解碼，接受開頭的 UTF-8 BOM 並正規化 CRLF。未知鍵由設定型別的反序列化規則拒絕，格式說明的文字由 `config::schema` 維護。`schema builtin` 與設定載入共用同一份內建 TOML 宣告。這一階段用 JSON 值承載欄位原值、格式說明與查詢結果，CLI 保留 §9.6 的輸出外層。
 
 `config::load` 從受限於 home 的檔案介面讀取 manifest、模組、Profile 與本機設定。`resolve` 按四層解析值，`query` 直接使用解析結果及 MiniJinja 引用。查詢的 `enabled_by` 和 `rule` 目前使用從 1 開始的 Profile 規則序號，來源位置使用檔案路徑。TOML 語法與型別錯誤另帶解析器提供的行、欄。平台由 `hostname` 收集名稱，Windows 以持有的目錄 handle 防止父目錄遭替換，Unix 以 `openat` 逐層讀取。MiniJinja 3.1 的結尾換行選項透過 `SyntaxConfig` 設定。

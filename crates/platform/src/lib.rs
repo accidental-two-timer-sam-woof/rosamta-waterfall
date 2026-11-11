@@ -10,7 +10,7 @@ mod unix;
 mod windows;
 
 use rosamta_core::{
-    fs::{Entry, FileSystem},
+    fs::{Entry, FileSystem, Replacement, WriteLock},
     path::HomePath,
 };
 use std::{ffi::OsStr, io, path::Path};
@@ -32,10 +32,25 @@ impl SystemFs {
     }
 
     fn chain(&self, parts: &str) -> io::Result<Vec<Dir>> {
+        self.walk(parts, false)
+    }
+
+    fn walk(&self, parts: &str, create: bool) -> io::Result<Vec<Dir>> {
         let mut chain = Vec::new();
         for part in parts.split('/').filter(|part| !part.is_empty()) {
             let directory = chain.last().unwrap_or(&self.root);
-            let child = directory.child(OsStr::new(part))?;
+            let part = OsStr::new(part);
+            let child = match directory.child(part) {
+                Err(error) if create && error.kind() == io::ErrorKind::NotFound => {
+                    match directory.mkdir(part) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                        Err(error) => return Err(error),
+                    }
+                    directory.child(part)?
+                }
+                result => result?,
+            };
             chain.push(child);
         }
         Ok(chain)
@@ -43,6 +58,55 @@ impl SystemFs {
 }
 
 impl FileSystem for SystemFs {
+    fn lock(&self, path: &HomePath) -> io::Result<Box<dyn WriteLock>> {
+        let (parts, name) = path
+            .as_str()
+            .rsplit_once('/')
+            .unwrap_or(("", path.as_str()));
+        let chain = self.walk(parts, true)?;
+        let handle = chain.last().unwrap_or(&self.root).lock(OsStr::new(name))?;
+        Ok(Box::new(SystemLock {
+            _handle: handle,
+            _chain: chain,
+        }))
+    }
+
+    fn change(
+        &self,
+        path: &HomePath,
+        expected: Option<&Entry>,
+        replacement: Option<Replacement<'_>>,
+    ) -> io::Result<Option<Entry>> {
+        let (parts, name) = path
+            .as_str()
+            .rsplit_once('/')
+            .unwrap_or(("", path.as_str()));
+        let chain = self.walk(parts, expected.is_none() && replacement.is_some())?;
+        let parent = chain.last().unwrap_or(&self.root);
+        let fresh = self.chain(parts)?;
+        if fresh.last().unwrap_or(&self.root).id()? != parent.id()? {
+            return Err(io::Error::other("target parent changed after opening it"));
+        }
+        parent.change(OsStr::new(name), expected, replacement)
+    }
+
+    fn create_directory(&self, path: &HomePath) -> io::Result<()> {
+        let (parts, name) = path
+            .as_str()
+            .rsplit_once('/')
+            .unwrap_or(("", path.as_str()));
+        let chain = self.walk(parts, true)?;
+        chain.last().unwrap_or(&self.root).mkdir(OsStr::new(name))
+    }
+
+    fn remove_empty_directory(&self, path: &HomePath) -> io::Result<()> {
+        let (parts, name) = path
+            .as_str()
+            .rsplit_once('/')
+            .unwrap_or(("", path.as_str()));
+        let chain = self.chain(parts)?;
+        chain.last().unwrap_or(&self.root).rmdir(OsStr::new(name))
+    }
     fn inspect(&self, path: &HomePath) -> io::Result<Option<Entry>> {
         let (parts, name) = path
             .as_str()
@@ -62,4 +126,22 @@ impl FileSystem for SystemFs {
             Err(error) => Err(error),
         }
     }
+}
+
+struct SystemLock {
+    _handle: std::fs::File,
+    _chain: Vec<Dir>,
+}
+
+impl WriteLock for SystemLock {}
+
+fn temp_name() -> std::ffi::OsString {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    format!(
+        ".rosamta-tmp.{}.{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+    .into()
 }
