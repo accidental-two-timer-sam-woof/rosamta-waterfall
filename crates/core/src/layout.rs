@@ -44,6 +44,13 @@ impl Layout {
     }
 
     pub fn reserved(&self, target: &HomePath, host: &HostContext) -> bool {
+        if target
+            .key(host.platform)
+            .split('/')
+            .any(|part| part.starts_with(".rosamta-tmp.") || part.contains(".rosamta-clone."))
+        {
+            return true;
+        }
         [&self.config, &self.source, &self.state]
             .into_iter()
             .any(|path| {

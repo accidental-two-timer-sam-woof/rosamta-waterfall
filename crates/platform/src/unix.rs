@@ -13,6 +13,12 @@ use rustix::fs::{self, AtFlags, CWD, FileType, Mode, OFlags, Stat};
 
 pub(super) struct Dir(OwnedFd);
 
+pub(super) fn creation_mode() -> u32 {
+    let current = rustix::process::umask(Mode::from_raw_mode(0o777));
+    rustix::process::umask(current);
+    0o666 & !current.as_raw_mode()
+}
+
 impl Dir {
     pub(super) fn enter_child_process(&self, command: &mut std::process::Command) {
         use std::os::{
@@ -68,6 +74,7 @@ impl Dir {
         Ok(identity(&fs::fstat(&self.0)?))
     }
 
+    #[cfg_attr(target_os = "linux", allow(clippy::useless_conversion))] // macOS st_mode is u16.
     pub(super) fn entry(&self, name: &OsStr) -> io::Result<Option<Entry>> {
         let before = match fs::statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW) {
             Ok(stat) => stat,
@@ -169,11 +176,28 @@ impl Dir {
         name: &OsStr,
         expected: Option<&Entry>,
         replacement: Option<rosamta_core::fs::Replacement<'_>>,
+        creation_mode: u32,
+        verify: impl Fn() -> io::Result<()>,
     ) -> io::Result<Option<Entry>> {
-        if self.entry(name)?.as_ref() != expected
-            || expected.is_some_and(|entry| entry.kind != Kind::Regular)
+        let actual = self.entry(name)?;
+        if expected.is_none() && actual.is_some() {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
+        if actual.as_ref() != expected
+            || expected.is_some_and(|entry| {
+                entry.kind != Kind::Regular
+                    && (entry.kind != Kind::Symlink || replacement.is_none())
+            })
         {
             return Err(io::Error::other("target changed after planning"));
+        }
+        if let (Some(expected), Some(replacement)) = (expected, &replacement)
+            && expected.kind == Kind::Regular
+            && expected.bytes == replacement.bytes
+            && let Some(mode) = replacement.mode
+            && expected.mode != Some(mode)
+        {
+            return self.change_mode(name, expected, mode, verify).map(Some);
         }
         let temp = super::temp_name();
         if let Some(replacement) = replacement {
@@ -187,14 +211,32 @@ impl Dir {
             let mut file = File::from(fd);
             let mode = replacement
                 .mode
-                .or_else(|| expected.and_then(|entry| entry.mode))
-                .unwrap_or(0o600);
-            let prepared = (|| -> io::Result<()> {
+                .or_else(|| {
+                    expected
+                        .filter(|entry| entry.kind == Kind::Regular)
+                        .and_then(|entry| entry.mode)
+                })
+                .unwrap_or(creation_mode);
+            let prepared = (|| -> io::Result<Entry> {
                 file.write_all(replacement.bytes)?;
                 fs::fchmod(&file, Mode::from_raw_mode(mode))?;
-                file.sync_all()
+                file.sync_all()?;
+                Ok(Entry {
+                    kind: Kind::Regular,
+                    identity: identity(&fs::fstat(&file)?),
+                    parent: self.id()?,
+                    bytes: replacement.bytes.to_vec(),
+                    mode: Some(mode),
+                })
             })();
-            if let Err(error) = prepared {
+            let written = match prepared {
+                Ok(written) => written,
+                Err(error) => {
+                    let _ = self.unlink(&temp);
+                    return Err(error);
+                }
+            };
+            if let Err(error) = verify() {
                 let _ = self.unlink(&temp);
                 return Err(error);
             }
@@ -203,12 +245,28 @@ impl Dir {
                     let _ = self.unlink(&temp);
                     return Err(error);
                 }
+                if let Err(error) = verify() {
+                    let current = fs::statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW);
+                    if matches!(current, Ok(stat) if identity(&stat) == written.identity) {
+                        self.rename(name, &temp, fs::RenameFlags::NOREPLACE)?;
+                        self.unlink(&temp)?;
+                    }
+                    return Err(error);
+                }
             } else {
                 if let Err(error) = self.rename(&temp, name, fs::RenameFlags::EXCHANGE) {
                     let _ = self.unlink(&temp);
                     return Err(error);
                 }
-                if !matches!(self.entry(&temp), Ok(ref old) if old.as_ref() == expected) {
+                if !matches!(self.entry(&temp), Ok(ref old) if old.as_ref() == expected)
+                    || verify().is_err()
+                {
+                    let current = fs::statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW);
+                    if !matches!(current, Ok(stat) if identity(&stat) == written.identity) {
+                        return Err(io::Error::other(format!(
+                            "target changed again during replacement; old entry remains at {temp:?}"
+                        )));
+                    }
                     self.rename(&temp, name, fs::RenameFlags::EXCHANGE).map_err(|error| {
                         io::Error::other(format!("replacement changed and could not be reversed; recover {:?}: {error}", temp))
                     })?;
@@ -217,13 +275,16 @@ impl Dir {
                 }
                 let _ = self.unlink(&temp);
             }
-            self.entry(name)
+            Ok(Some(written))
         } else {
             if expected.is_none() {
                 return Ok(None);
             }
+            verify()?;
             self.rename(name, &temp, fs::RenameFlags::NOREPLACE)?;
-            if !matches!(self.entry(&temp), Ok(ref old) if old.as_ref() == expected) {
+            if !matches!(self.entry(&temp), Ok(ref old) if old.as_ref() == expected)
+                || verify().is_err()
+            {
                 self.rename(&temp, name, fs::RenameFlags::NOREPLACE)
                     .map_err(|error| {
                         io::Error::other(format!(
@@ -245,7 +306,97 @@ impl Dir {
         Ok(fs::unlinkat(&self.0, name, AtFlags::empty())?)
     }
 
+    fn change_mode(
+        &self,
+        name: &OsStr,
+        expected: &Entry,
+        mode: u32,
+        verify: impl Fn() -> io::Result<()>,
+    ) -> io::Result<Entry> {
+        let fd = fs::openat(
+            &self.0,
+            name,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
+        )?;
+        let stat = fs::fstat(&fd)?;
+        if kind(&stat) != Kind::Regular
+            || identity(&stat) != expected.identity
+            || self.entry(name)?.as_ref() != Some(expected)
+        {
+            return Err(io::Error::other("target changed before changing its mode"));
+        }
+        verify()?;
+        fs::fchmod(&fd, Mode::from_raw_mode(mode))?;
+        let check = fs::statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW);
+        if !matches!(check, Ok(stat) if identity(&stat) == expected.identity) || verify().is_err() {
+            if let Some(previous) = expected.mode {
+                fs::fchmod(&fd, Mode::from_raw_mode(previous))?;
+            }
+            return Err(io::Error::other("target moved during mode change"));
+        }
+        let mut updated = expected.clone();
+        updated.mode = Some(mode);
+        Ok(updated)
+    }
+
     fn rename(&self, from: &OsStr, to: &OsStr, flags: fs::RenameFlags) -> io::Result<()> {
         Ok(fs::renameat_with(&self.0, from, &self.0, to, flags)?)
+    }
+
+    pub(super) fn link_to(
+        &self,
+        name: &OsStr,
+        expected: &Entry,
+        target: &Self,
+        destination: &OsStr,
+    ) -> io::Result<()> {
+        if !self.same_link(name, expected)? {
+            return Err(io::Error::other("symbolic link changed"));
+        }
+        fs::linkat(&self.0, name, &target.0, destination, AtFlags::empty())?;
+        if !target.same_link(destination, expected)? {
+            target.unlink(destination)?;
+            return Err(io::Error::other(
+                "symbolic link changed while backing it up",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn restore_link(
+        &self,
+        name: &OsStr,
+        expected: &Entry,
+        backup: &Self,
+        saved: &OsStr,
+        original: &Entry,
+    ) -> io::Result<()> {
+        if self.entry(name)?.as_ref() != Some(expected) {
+            return Err(io::Error::other("target changed before link restoration"));
+        }
+        let temp = super::temp_name();
+        backup.link_to(saved, original, self, &temp)?;
+        if let Err(error) = self.rename(&temp, name, fs::RenameFlags::EXCHANGE) {
+            let _ = self.unlink(&temp);
+            return Err(error);
+        }
+        if !matches!(self.entry(&temp), Ok(Some(ref current)) if current == expected) {
+            if !self.same_link(name, original)? {
+                return Err(io::Error::other(format!(
+                    "target changed during recovery; displaced file remains at {temp:?}"
+                )));
+            }
+            self.rename(&temp, name, fs::RenameFlags::EXCHANGE)?;
+            self.unlink(&temp)?;
+            return Err(io::Error::other("target changed during link restoration"));
+        }
+        self.unlink(&temp)
+    }
+
+    fn same_link(&self, name: &OsStr, expected: &Entry) -> io::Result<bool> {
+        Ok(self.entry(name)?.is_some_and(|entry| {
+            entry.kind == Kind::Symlink && entry.identity == expected.identity
+        }))
     }
 }

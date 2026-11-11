@@ -52,6 +52,17 @@ pub trait FileSystem {
         identity: &str,
         destination: &HomePath,
     ) -> io::Result<()>;
+
+    fn backup_link(&self, source: &HomePath, expected: &Entry, backup: &HomePath)
+    -> io::Result<()>;
+
+    fn restore_link(
+        &self,
+        backup: &HomePath,
+        original: &Entry,
+        target: &HomePath,
+        expected: &Entry,
+    ) -> io::Result<()>;
     fn inspect(&self, path: &HomePath) -> io::Result<Option<Entry>>;
     fn children(&self, path: &HomePath) -> io::Result<Vec<String>>;
 

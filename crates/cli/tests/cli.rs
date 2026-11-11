@@ -431,3 +431,98 @@ fn init_merges_local_settings_and_prepares_an_empty_source() {
     assert!(String::from_utf8_lossy(&existing.stderr).contains("already exists"));
     assert_eq!(fs::read(config.join("local.toml")).unwrap(), before);
 }
+
+#[test]
+fn symbolic_link_takeover_backs_up_the_link_without_following_it() {
+    let home = temporary_home().unwrap();
+    let outside = temporary_home().unwrap();
+    let source = deployment_fixture(&home);
+    let external = outside.path().join("external");
+    fs::write(&external, b"external data").unwrap();
+    let target = home.path().join("a.txt");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&external, &target).unwrap();
+    #[cfg(windows)]
+    if let Err(error) = std::os::windows::fs::symlink_file(&external, &target) {
+        if error.raw_os_error() == Some(1314) {
+            return;
+        }
+        panic!("creating test link: {error}");
+    }
+    assert_eq!(run(&home, &["apply"]).status.code(), Some(2));
+    assert_eq!(fs::read_link(&target).unwrap(), external);
+    let manifest = source.join("manifest.toml");
+    let text = fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("[outputs.first]\n", "[outputs.first]\ntakeover = true\n");
+    fs::write(manifest, text).unwrap();
+    let output = successful(&home, &["apply", "--format", "json"]);
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let backup = value["result"]["items"][0]["backup"].as_str().unwrap();
+    assert_eq!(fs::read_link(backup).unwrap(), external);
+    assert_eq!(fs::read(&target).unwrap(), b"first\n");
+    assert_eq!(fs::read(&external).unwrap(), b"external data");
+    assert!(
+        !fs::symlink_metadata(&target)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_only_changes_keep_the_existing_file() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let home = temporary_home().unwrap();
+    deployment_fixture(&home);
+    successful(&home, &["apply"]);
+    let target = home.path().join("a.txt");
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+    let original = fs::metadata(&target).unwrap();
+    successful(&home, &["modify", "first", "--permissions", "0600"]);
+    successful(&home, &["apply"]);
+    let result = fs::metadata(&target).unwrap();
+    assert_eq!(result.ino(), original.ino());
+    assert_eq!(result.permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::read(&target).unwrap(), b"first\n");
+    let txn = home.path().join(".local/state/rosamta/txn");
+    assert_eq!(
+        fs::metadata(txn).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_restores_a_taken_over_symbolic_link() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let home = temporary_home().unwrap();
+    let outside = temporary_home().unwrap();
+    let source = deployment_fixture(&home);
+    let external = outside.path().join("target");
+    fs::write(&external, "original external data").unwrap();
+    let target = home.path().join("a.txt");
+    symlink(&external, &target).unwrap();
+    let blocked = home.path().join("blocked");
+    fs::create_dir(&blocked).unwrap();
+    fs::write(blocked.join("z.txt"), "existing data").unwrap();
+    fs::set_permissions(&blocked, fs::Permissions::from_mode(0o500)).unwrap();
+    fs::write(source.join("manifest.toml"), "[outputs.first]\ncopy = \"contents\"\ntarget = \"~/a.txt\"\ntakeover = true\n[outputs.second]\ncopy = \"contents\"\ntarget = \"~/blocked/z.txt\"\ntakeover = true\n").unwrap();
+    let output = run(&home, &["apply", "--format", "json"]);
+    fs::set_permissions(&blocked, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["result"]["items"][0]["status"], "reverted");
+    assert_eq!(fs::read_link(&target).unwrap(), external);
+    assert_eq!(
+        fs::read_to_string(external).unwrap(),
+        "original external data"
+    );
+    assert!(!home.path().join(".local/state/rosamta/state.json").exists());
+}

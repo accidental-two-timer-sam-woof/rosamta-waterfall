@@ -238,14 +238,14 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | 預檢、預覽與套用 | `apply::analyze` 組合期望內容、狀態與計畫。 `apply::deploy` 確認 manifest 可載入後持狀態鎖重新預檢，由 `exec::execute` 提交目標與狀態。差異使用 similar |
 | 設定檔編輯 | `manage::ManifestService` 與 `docedit::Editor` 保留 BOM、換行與既有值的 decor。新增屬性的縮排依 toml_edit 預設。 `forget` 依 §5.13 先提交 `forget_pending` |
 | 初始化 | `init::initialize` 先在來源旁的暫存目錄取得 Git 內容，寫入本機設定後以不覆蓋改名發布。若發布失敗會嘗試還原本機設定，保留暫存目錄供檢查。未指定遠端時只建立來源與本機設定，首次套用由遠端初始化呼叫共用套用流程 |
-| 平台檔案介面 | `FileSystem` 的 `inspect`、`children`、`change`、`lock` 與目錄操作由 `SystemFs` 實作。Unix 逐層以 `openat` 開啟，Windows 持有父目錄 handle。Unix 交換式替換或以暫存名稱核對後刪除，Windows 用 [ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew) 並核對留下的舊檔，刪除使用經核對的 handle |
-| 回復與備份 | `recovery::Journal` 依套用記錄反向回復，快照名稱為 `before-<項目序號>`。程序中止或回復失敗後，現有快照保留供使用者檢查。一般檔案接管會留下副本 |
+| 平台檔案介面 | `FileSystem` 的 `inspect`、`children`、`change`、`lock` 與目錄操作由 `SystemFs` 實作。Unix 逐層以 `openat` 開啟，交換式替換並重新核對父目錄，只變更 mode 時以已開啟的檔案描述符操作。Windows 持有父目錄 handle，複製舊檔的 DACL，再以目錄 handle 為基準改名，刪除使用經核對的 handle |
+| 回復與備份 | `recovery::Journal` 依套用記錄反向回復，快照名稱為 `before-<項目序號>`。程序中止或回復失敗後，現有快照保留供使用者檢查。一般檔案接管會留下副本。符號連結接管與回復使用連結本身的硬連結，須在同一檔案系統 |
 | 輸出與測試 | CLI 以 §9.6 的 JSON 外層回傳各服務結果，部份內部資料以 JSON 值承載。 `crates/cli/tests/cli.rs` 驗證實際子程序， `crates/core/tests/architecture.rs` 檢查模組依賴。workspace CI 在三平台建置並執行測試 |
 
 實際驗收的差異如下：
 
 - Windows 路徑比較目前以 Unicode 小寫產生路徑鍵，Linux 與 macOS 以原字串比較。檔案系統的大小寫規則、別名與中途置換仍須依 §6 驗收。
-- 套用目前只接管和清除一般檔案，只改 Unix 權限時也走替換。Windows 替換保留現有檔案的 DACL，新目錄沿用上層 ACL。符號連結接管與專用的私有 DACL 仍待實作與驗收。
+- 清除只作用於一般檔案。Windows 上符號連結以 reparse tag 識別，其他 reparse point 不接管。Windows 私有目錄建立時授權目前使用者與 SYSTEM。目標持有到改名前，釋放 handle 到改名之間仍有 §6.3 所述的空窗，須在標準使用者和不同開發人員模式下驗收。
 - 語法或型別錯誤會附解析器的位置。預檢引用目前以範本路徑與欄位名稱定位，尚未對所有語意錯誤附行、欄及修正提示。CLI 診斷以共用代碼回報各階段失敗。
 - 遠端初始化失敗後只自動移除空的暫存目錄，仍有資料的暫存目錄會保留並附路徑。程序中止後尚無依 §6.5 自動清理暫存檔的流程。
 - `help` 子指令的 `--format` 放在 `help` 前，輸出為文字。一般子指令接受前後兩種位置。

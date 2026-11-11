@@ -22,12 +22,20 @@ use windows::Dir;
 
 pub struct SystemFs {
     root: Dir,
+    #[cfg(unix)]
+    home: std::path::PathBuf,
+    #[cfg(unix)]
+    creation_mode: u32,
 }
 
 impl SystemFs {
     pub fn open(path: &Path) -> io::Result<Self> {
         Ok(Self {
             root: Dir::home(path)?,
+            #[cfg(unix)]
+            home: path.to_owned(),
+            #[cfg(unix)]
+            creation_mode: unix::creation_mode(),
         })
     }
 
@@ -71,6 +79,40 @@ impl FileSystem for SystemFs {
         }))
     }
 
+    fn backup_link(
+        &self,
+        source: &HomePath,
+        expected: &Entry,
+        backup: &HomePath,
+    ) -> io::Result<()> {
+        let (source_parent, source_name) = split_path(source);
+        let (backup_parent, backup_name) = split_path(backup);
+        let original = self.chain(source_parent)?;
+        let backup_chain = self.walk(backup_parent, true)?;
+        original.last().unwrap_or(&self.root).link_to(
+            source_name,
+            expected,
+            backup_chain.last().unwrap_or(&self.root),
+            backup_name,
+        )
+    }
+
+    fn restore_link(
+        &self,
+        backup: &HomePath,
+        original: &Entry,
+        target: &HomePath,
+        expected: &Entry,
+    ) -> io::Result<()> {
+        let (backup_parent, backup_name) = split_path(backup);
+        let (target_parent, target_name) = split_path(target);
+        let backup_chain = self.chain(backup_parent)?;
+        let target_chain = self.chain(target_parent)?;
+        let from = backup_chain.last().unwrap_or(&self.root);
+        let to = target_chain.last().unwrap_or(&self.root);
+        to.restore_link(target_name, expected, from, backup_name, original)
+    }
+
     fn change(
         &self,
         path: &HomePath,
@@ -83,11 +125,32 @@ impl FileSystem for SystemFs {
             .unwrap_or(("", path.as_str()));
         let chain = self.walk(parts, expected.is_none() && replacement.is_some())?;
         let parent = chain.last().unwrap_or(&self.root);
-        let fresh = self.chain(parts)?;
-        if fresh.last().unwrap_or(&self.root).id()? != parent.id()? {
-            return Err(io::Error::other("target parent changed after opening it"));
+        let verify = || {
+            #[cfg(unix)]
+            if Dir::home(&self.home)?.id()? != self.root.id()? {
+                return Err(io::Error::other("home moved after opening it"));
+            }
+            let fresh = self.chain(parts)?;
+            if fresh.last().unwrap_or(&self.root).id()? != parent.id()? {
+                return Err(io::Error::other("target parent changed after opening it"));
+            }
+            Ok(())
+        };
+        #[cfg(unix)]
+        {
+            parent.change(
+                OsStr::new(name),
+                expected,
+                replacement,
+                self.creation_mode,
+                verify,
+            )
         }
-        parent.change(OsStr::new(name), expected, replacement)
+        #[cfg(windows)]
+        {
+            verify()?;
+            parent.change(OsStr::new(name), expected, replacement)
+        }
     }
 
     fn create_directory(&self, path: &HomePath) -> io::Result<()> {
@@ -156,6 +219,14 @@ impl FileSystem for SystemFs {
 struct SystemLock {
     _handle: std::fs::File,
     _chain: Vec<Dir>,
+}
+
+fn split_path(path: &HomePath) -> (&str, &OsStr) {
+    let (parent, name) = path
+        .as_str()
+        .rsplit_once('/')
+        .unwrap_or(("", path.as_str()));
+    (parent, OsStr::new(name))
 }
 
 impl WriteLock for SystemLock {}

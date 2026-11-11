@@ -1,7 +1,7 @@
 //! Plan execution and takeover backups (05 §4.14).
 
 use crate::{
-    fs::{Entry, FileSystem, Replacement},
+    fs::{Entry, FileSystem, Kind, Replacement},
     host::Platform,
     layout::Layout,
     path::HomePath,
@@ -108,6 +108,7 @@ pub fn execute(
     report.batch = batch;
     let mut journal = Journal::new(fs, dir);
     let mut records = state.records.clone();
+    let mut check_after = Vec::new();
 
     for (index, item) in plan.items.iter().enumerate() {
         if item.disposition == Disposition::Retain {
@@ -124,7 +125,12 @@ pub fn execute(
         ) {
             Ok(current) => {
                 match plan::update_record(&mut records, item, current.as_ref(), platform) {
-                    Ok(()) => report.items[index].status = "done",
+                    Ok(()) => {
+                        if item.writes_target() || item.record_changed {
+                            check_after.push((index, current));
+                        }
+                        report.items[index].status = "done";
+                    }
                     Err(error) => {
                         fail(&mut report, index, item, error);
                         break;
@@ -138,6 +144,24 @@ pub fn execute(
         }
     }
 
+    if report.failure.is_none() {
+        for (index, expected) in check_after {
+            let item = &plan.items[index];
+            // A declared mode of 000 can prevent re-reading the file we just wrote.
+            if expected.as_ref().is_some_and(|entry| entry.mode == Some(0)) {
+                continue;
+            }
+            if !matches!(fs.inspect(&item.target), Ok(actual) if actual == expected) {
+                fail(
+                    &mut report,
+                    index,
+                    item,
+                    "target changed before committing state".into(),
+                );
+                break;
+            }
+        }
+    }
     if report.failure.is_none()
         && records != state.records
         && let Err(error) = write_state(fs, state, &records)
@@ -196,23 +220,32 @@ fn apply_item(
     if !item.writes_target() {
         return Ok(checked);
     }
+    let mut link_backup = None;
     if let Some(before) = &checked {
-        journal.save(index, before)?;
+        if before.kind == Kind::Regular {
+            journal.save(index, before)?;
+        }
         if item.disposition == Disposition::Takeover {
             let path = layout
                 .state
                 .join("backups")?
                 .join(batch)?
                 .join(item.target.as_str())?;
-            fs.change(
-                &path,
-                None,
-                Some(Replacement {
-                    bytes: &before.bytes,
-                    mode: before.mode,
-                }),
-            )
-            .map_err(|error| format!("{path}: {error}"))?;
+            if before.kind == Kind::Symlink {
+                fs.backup_link(&item.target, before, &path)
+                    .map_err(|error| format!("{path}: {error}"))?;
+                link_backup = Some(path.clone());
+            } else {
+                fs.change(
+                    &path,
+                    None,
+                    Some(Replacement {
+                        bytes: &before.bytes,
+                        mode: before.mode,
+                    }),
+                )
+                .map_err(|error| format!("{path}: {error}"))?;
+            }
             report.backup = Some(path);
         }
     }
@@ -223,7 +256,13 @@ fn apply_item(
     let after = fs
         .change(&item.target, checked.as_ref(), replacement)
         .map_err(|error| error.to_string())?;
-    journal.record(index, item.target.clone(), checked, after.clone());
+    journal.record(
+        index,
+        item.target.clone(),
+        checked,
+        after.clone(),
+        link_backup,
+    );
     Ok(after)
 }
 

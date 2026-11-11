@@ -14,7 +14,7 @@ hostname = "=0.4.2"
 rustix = { version = "=1.1.6", features = ["fs", "process"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "=0.61.2", features = ["Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
 [lints]
 workspace = true

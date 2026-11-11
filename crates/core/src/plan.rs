@@ -146,6 +146,19 @@ pub fn build(
             record_changed: false,
         };
         let record = state.records.get(&key);
+        if output.ownership != Ownership::CreateOnly
+            && output.takeover
+            && item
+                .before
+                .as_ref()
+                .is_some_and(|entry| !matches!(entry.kind, Kind::Regular | Kind::Symlink))
+        {
+            errors.push(format!(
+                "{}: {} has a type that cannot be taken over",
+                output.name, item.target
+            ));
+            continue;
+        }
         classify(
             &mut item,
             record,
@@ -273,6 +286,16 @@ fn classify(
     let record = record.filter(|record| record.parent.matches(before, platform));
     if ownership == Ownership::CreateOnly {
         item.record_changed = record.is_some_and(|record| record.name != item.output);
+        return;
+    }
+    if before.kind == Kind::Symlink {
+        item.action = Action::Update;
+        if takeover {
+            item.disposition = Disposition::Takeover;
+            item.record_changed = true;
+        } else {
+            retain(item, "unmanaged");
+        }
         return;
     }
     if before.kind != Kind::Regular {

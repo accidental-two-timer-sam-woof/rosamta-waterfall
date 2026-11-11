@@ -18,6 +18,7 @@ struct Change {
     target: HomePath,
     before: Option<Entry>,
     after: Option<Entry>,
+    link_backup: Option<HomePath>,
 }
 
 pub struct RecoveryFailure {
@@ -58,12 +59,14 @@ impl<'a> Journal<'a> {
         target: HomePath,
         before: Option<Entry>,
         after: Option<Entry>,
+        link_backup: Option<HomePath>,
     ) {
         self.changes.push(Change {
             index,
             target,
             before,
             after,
+            link_backup,
         });
     }
 
@@ -75,10 +78,18 @@ impl<'a> Journal<'a> {
                 bytes: &entry.bytes,
                 mode: entry.mode,
             });
-            match self
-                .fs
-                .change(&change.target, change.after.as_ref(), replacement)
-            {
+            let result = match (&change.link_backup, &change.before, &change.after) {
+                (Some(backup), Some(original), Some(expected)) => {
+                    self.fs
+                        .restore_link(backup, original, &change.target, expected)
+                }
+                (Some(_), _, _) => Err(io::Error::other("missing observed file for link recovery")),
+                (None, _, _) => self
+                    .fs
+                    .change(&change.target, change.after.as_ref(), replacement)
+                    .map(|_| ()),
+            };
+            match result {
                 Ok(_) => reverted.push(change.index),
                 Err(error) => failures.push(RecoveryFailure {
                     index: change.index,
