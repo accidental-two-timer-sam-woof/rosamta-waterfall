@@ -2944,7 +2944,7 @@ error[preflight.collision]: outputs "nvim" and "nvim-work" have the same target 
 
 `--format json` 時：
 
-- 標準輸出只有一個 JSON 文件，以換行結束。子指令失敗時同樣輸出，`result` 為 `null`。
+- 標準輸出只有一個 JSON 文件，以換行結束。子指令失敗時同樣輸出。只有沒有產生結果時，`result` 才是 `null`，例如預檢失敗、取不到鎖定，或初始化在取得來源時失敗。`apply` 回傳了套用回報時，即使 `outcome` 為 `failed`、exit code 為 `1`，`result` 仍是完整的回報，包括逐項的 `items`、`failure` 與 `recovery`（FR-APL-003–005），exit code 依 §9.7 由 `outcome` 決定。`init` 的 `apply` 欄位相同。
 - 標準錯誤的每個診斷是一行 JSON（JSON Lines），包括 §9.5 由執行錯誤轉成的診斷。錯誤與警告不出現在標準輸出（IF-008）。
 - 參數錯誤時以文字輸出（§9.2）。
 
