@@ -1232,7 +1232,7 @@ pub trait Executed { fn confirm(self: Box<Self>) -> Result<OpOutcome, FsError>; 
 pub trait LockGuard {}
 ```
 
-會改變檔案的方法都要求 `&WriteLock`，所以不取得鎖定的預覽與查詢無法寫入（FR-PLN-004、FR-QRY-006），由型別保證，不必靠 review。`ensure_private_dir` 是唯一的例外：取得鎖定之前，必須先有放鎖定檔的狀態目錄（§6.7）。它只建立 rosamta 自己的目錄，不碰任何輸出。
+修改輸出、狀態及設定的方法要求 `&WriteLock`。建立程式私有目錄的 `ensure_private_dir` 與取得鎖定的 `lock` 不要求預先持有鎖定，因為 `WriteLock::acquire` 必須先準備狀態目錄與其中的鎖定檔（§6.7）。唯讀指令不進入鎖定或目錄準備流程（FR-PLN-004、FR-QRY-006）。
 
 **綁定的操作**：每個操作分成三次呼叫，對應 §6.3 的步驟。core 在呼叫之間到達同步點（§8.2）：
 
@@ -2499,7 +2499,7 @@ SRS AS-5 假設同一組目標同時只有一個 rosamta 程序在套用；03 §
 - 預覽、摘要、查詢與說明不取得鎖定：鎖定檔可能需要建立，違反預覽與查詢的唯讀要求（FR-PLN-004、FR-QRY-006）。另一個程序正在套用時，預覽看到的是當下的檔案。
 - Linux 與 macOS：經 §6.1 的走訪，以 `openat(O_RDWR | O_CREAT | O_NOFOLLOW, 0600)` 開啟鎖定檔，再呼叫 `flock(LOCK_EX | LOCK_NB)`。不用 `fcntl` 的記錄鎖：同一個程序關閉該檔案的任何一個 fd，`fcntl` 鎖就會釋放。Windows：以共用模式 `0` 和 `OPEN_ALWAYS` 開啟，已被其他程序開啟時以 `ERROR_SHARING_VIOLATION` 失敗（ASM-20）。
 - 程序結束或被終止時，作業系統釋放鎖定，不會留下需要手動刪除的鎖。鎖定檔建立後不刪除：刪除後再建立，兩個程序可能各自鎖住不同的檔案。
-- 初始化時狀態目錄可能還不存在，先依 §5.1 建立狀態目錄，再取得鎖定。
+- 狀態目錄與鎖定檔可能還不存在。只有會寫入的子指令會呼叫 `WriteLock::acquire`；它先依 §5.1 以 `ensure_private_dir` 建立缺少的狀態目錄，再以 `lock` 建立或開啟鎖定檔並取得鎖定。這一步只準備鎖定，其他變更須等鎖定成功後再做。
 
 **停止管理與套用**（§5.13、FR-MAN-025、04 §2）：兩者取得同一個鎖定，不會交錯執行。套用在取得鎖定之後才規劃，不沿用先前預覽的計畫，所以停止管理完成後的套用，一定依新的 manifest 與狀態檔規劃；04 §2 提到的計畫版本檢查不需要另外實作。A5 最後一個情境中，若在套用持有鎖定時執行停止管理，停止管理會因取不到鎖定而失敗，套用依原計畫完成，屬於 04 §5「平台阻止外部操作」的情形。
 
@@ -3097,7 +3097,7 @@ Command 不在 Valente Ch.6 介紹的模式中，名稱取自 GoF。回復快照
 
 | 型別 | 只能由誰建立 | 保證 |
 | --- | --- | --- |
-| `WriteLock` | `WriteLock::acquire`（§4.10） | 會改變檔案的操作都已取得鎖定；預覽與查詢無法寫入（FR-PLN-004、FR-QRY-006） |
+| `WriteLock` | `WriteLock::acquire`（§4.10） | 建立狀態目錄與鎖定檔後才取得鎖定，其他變更都要求鎖定；預覽與查詢不執行鎖定流程（FR-PLN-004、FR-QRY-006） |
 | `Reported`、`Checked<T>` | `Diagnostics::error`（§4.1） | 回傳失敗時至少已記錄一個錯誤 |
 | `TemplateValues` | `PreflightChecker::check_inputs`（§4.5） | 交給範本的值都通過了型別檢查 |
 | `DesiredContent` | `Planner`（§4.12） | 寫入的內容來自預檢時的那一次渲染或讀取（A24） |
@@ -3127,7 +3127,7 @@ Valente 以 conceptual integrity 指系統的一致性：同類的問題以同�
 | 規則 | 範圍與例外 | 檢查方式 |
 | --- | --- | --- |
 | 使用者輸入的問題一律以 `Diagnostic` 回報；`FsError` 只在 core 內部，由使用它的類別轉成自己的代碼；執行錯誤記在 `ApplyReport`，由執行檔轉成診斷（§9.5）。panic 只表示程式本身的錯誤 | 內建資源的錯誤是程式的錯誤，以 panic 處理（§4.2） | review；core 啟用 clippy 的 `unwrap_used` 與 `expect_used`，維持內部不變量的 `expect` 須加 `allow` 並寫出理由 |
-| 所有寫入都是依觀測核對的綁定操作（§6.3）：輸出、狀態檔、manifest、本機設定、來源副本與暫存目錄 | git 以路徑寫入暫存目錄（§4.16）；`ensure_private_dir` 在取得鎖定前建立狀態目錄（§4.10） | 會改變檔案的 `FileSystem` 方法都要求 `&WriteLock`；core 禁用 `std::fs`（§11.3） |
+| 輸出、狀態檔、manifest、本機設定、來源副本與暫存目錄依觀測核對後寫入（§6.3） | git 寫入暫存目錄（§4.16）；取得鎖定須先準備狀態目錄與鎖定檔（§4.10） | 修改輸出、狀態及設定的方法要求 `&WriteLock`；core 禁用 `std::fs`（§11.3） |
 | 前置條件以型別表示（§10.2） | — | 編譯器；建構函式的限制見 §11.3 |
 | 每條規則只寫在一處：Profile 的判定在 `ProfileRule::matches`；覆寫層級在 `ValueResolver`；路徑的正規化在 `path`；位置的比較在 `LocationKey::relation`；§5.11 的判定在 `Planner`；讀取設定的順序在 `ConfigLoader::load_layout`；接受的鍵在 `config::schema`；exit code 在執行檔（§9.7）；JSON 的欄位在 `output::json` | — | review；§11.3 的 module 依賴檢查讓其他 module 無法引用這些規則的內部 |
 | 外部套件與平台 API 只出現在一個 module：TOML 在 `config` 與 `docedit`，MiniJinja 在 `template`，系統呼叫在 platform，參數解析在執行檔的 `cli` | `serde_json` 用在 `state` 的狀態檔與執行檔的 JSON 輸出，兩者的格式互不相關 | 各 crate 的 `Cargo.toml` 只列需要的套件（§3.1）；module 依賴檢查 |
@@ -3201,7 +3201,7 @@ core 另外啟用 `clippy::unwrap_used` 與 `clippy::expect_used`（§11.1）。
 
 | 編號 | 問題 | 不修改的理由 |
 | --- | --- | --- |
-| A1 | `FileSystem` 把唯讀與寫入的方法放在同一個 trait，`Planner`、`QueryService` 等唯讀的使用者也看得到寫入方法（ISP） | 寫入方法都要求 `&WriteLock`，唯讀的使用者拿不到鎖定，實際上無法呼叫。拆成兩個 trait 後，platform 與 `FaultFs` 都要實作兩個 trait，每個服務的簽名也要選用其中一個，得到的只是文件上的區分 |
+| A1 | `FileSystem` 把唯讀與寫入的方法放在同一個 trait，`Planner`、`QueryService` 等唯讀的使用者也看得到寫入方法（ISP） | 一般寫入方法都要求 `&WriteLock`，唯讀的使用者不取得鎖定。鎖定準備只在 `WriteLock::acquire` 內呼叫，由 §11.3 檢查。拆成兩個 trait 後，platform 與 `FaultFs` 都要實作兩個 trait，每個服務的簽名也要選用其中一個，得到的只是文件上的區分 |
 | A2 | `AnalysisContext` 借用八種資料，`PreflightChecker` 經由它讀取設定與值的內部（耦合面寬、Demeter） | 預檢的本質是檢查整批輸入的一致性，需要看到全部資料。呼叫者只有 `ApplyService`，借用都是唯讀的；依階段拆成不同的 context，會在三個型別重複大部分欄位 |
 | A3 | `RecoveryManager` 同時負責本批的回復與跨批次的殘留清理（SRP） | 兩者都依賴 journal 與批次目錄的格式。拆開後，這個格式就要成為兩個類別之間的公開介面，違反資訊隱藏（§4.13） |
 | A4 | `ManifestService` 持有 `StateStore`，只有 `forget` 使用（內聚） | 三個方法共用 manifest 的修改規則：以 `TomlEditor` 修改、以 `parse_manifest` 確認、依載入時的版本取代（§4.8）。把 `forget` 拆成另一個服務，就要重複這段規則 |
@@ -3394,7 +3394,7 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 | FR-PLN-001 | `Planner` 為每個項目決定 `Action` | §4.12、§9.4 |
 | FR-PLN-002 | §5.11 的「不變」不寫入；內容或權限不同才寫 | §4.14、§5.11 |
 | FR-PLN-003 | `keep_current` 保留目前的內容，`diff` 輸出差異 | §4.12、§9.4 |
-| FR-PLN-004 | 預覽不取得鎖定，寫入的方法都要求 `&WriteLock` | §4.10、§4.15、§6.7 |
+| FR-PLN-004 | 預覽不準備或取得鎖定，其他檔案變更要求 `&WriteLock` | §4.10、§4.15、§6.7 |
 | FR-PLN-005 | 範本環境不註冊讀寫檔案或執行命令的函式 | §2.3、§4.5 |
 | FR-PLN-006 | 預覽與套用共用 `Planner` 與 `Choices`；前提的解讀見 §12.3 | §4.12、§4.15、§12.3 |
 | FR-PLN-007 | `PreflightChecker` 的三個階段，通過才建立 `ApprovedPlan` | §4.6、§4.15 |

@@ -455,7 +455,7 @@ classDiagram
 
 ## 7. 詳細類別圖 D5：檔案系統與狀態
 
-對應 §4.10、§4.11。會改變檔案的方法都要求 `WriteLock`，`WriteLock` 只能由 `acquire` 建立。綁定的操作分成 `prepare`、`execute`、`confirm` 三次呼叫，同步點落在呼叫之間（E1）。
+對應 §4.10、§4.11。修改輸出、狀態及設定的方法要求 `WriteLock`。取得鎖定前，`acquire` 先以 `ensure_private_dir` 準備狀態目錄，再呼叫 `lock`。綁定的操作分成 `prepare`、`execute`、`confirm` 三次呼叫，同步點落在呼叫之間（E1）。
 
 ```mermaid
 classDiagram
