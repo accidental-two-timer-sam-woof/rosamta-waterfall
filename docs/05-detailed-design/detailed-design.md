@@ -634,7 +634,11 @@ pub mod schema {
 - 有任何錯誤時 `is_complete()` 為 `false`。套用與查詢依此決定是否繼續（§4.6、§4.9）。
 - `target` 與 `source` 只檢查語法（`RawPath::parse`），三個平台的 `target` 都檢查。展開要用到目前主機的環境變數，由預檢處理（§4.6）。
 
-**FR-MAN-004 的第一處**：TOML 不允許重複的表格與鍵，toml_edit 在遇到第二處時回報語法錯誤。`ConfigLoader` 取出錯誤中的鍵名，把檔案截到第二處所在行之前再解析一次。截斷的部分在第一個錯誤之前，所以仍是合法的 TOML，從中可以找到第一處的位置。兩處都列在診斷中。第二處在同一行內（例如 inline table 中的重複鍵）時，兩處都指向這一行。
+**FR-MAN-004 的重複輸出診斷**：toml_edit 仍負責正式解析。manifest 無法解析時，以補充掃描找出重複的輸出宣告。掃描只建立名稱與來源位置的索引，結果不用於合併設定、產生計畫或寫入。做法如下：
+
+1. 依 TOML 的詞法切分表格標頭、鍵與指定值。略過註解，辨識基本與字面字串、多行字串及逸出，追蹤陣列與 inline table 的括號，避免把值中的 `[outputs.x]` 認成表格。以同一套 TOML 鍵規則解碼每個路徑元件，帶引號的點留在同一個元件；記錄名稱在原檔的行與欄。
+2. 依目前表格與 inline table 的範圍組成完整鍵路徑，對 `outputs` 底下的名稱分組。顯式表格如 `[outputs.same]`、`[outputs . "same"]`，以及指定整個輸出值的鍵如 `outputs.same = { … }`，依解碼後的名稱識別。以不同的點分屬性填入同一個輸出（如 `outputs.same.copy`、`outputs.same.target.linux`）只算一個定義。依 TOML 的表格定義規則區分可補上顯式標頭的隱含父表格、已由點分鍵定義的表格與已封閉的 inline table，只有重複定義輸出本身才納入這項診斷。
+3. 保留正式解析器回報的重複位置與第一處宣告（可重解析第二處前的有效前綴補足）。以補充掃描加入其他已確認的位置，去除重複的診斷位置。宣告重複時繼續掃描至檔尾，不因單一名稱已重複而停止。每個重複名稱回報一次 `config.duplicate`，位置含第一次及其後每一處宣告，按原檔順序列出。可辨識的其他 TOML 語法問題仍用原解析診斷；掃描遇到無法可靠定位的語法時停止，保留原解析錯誤。一般重複屬性鍵或其他 TOML 語法錯誤沿用正式解析器的診斷。
 
 **錯誤**：
 
@@ -643,7 +647,7 @@ pub mod schema {
 | `config.read-failed` | 讀取失敗，附作業系統的錯誤；或檔案、路徑中有連結（§6.1） |
 | `config.not-utf8` | 無法以 UTF-8 解碼，指出所在的行 |
 | `config.syntax` | TOML 語法錯誤 |
-| `config.duplicate` | 重複的輸出、表格或鍵，列出每一處（FR-MAN-004） |
+| `config.duplicate` | 重複的輸出、表格或鍵，列出每一處。重複輸出名稱另依上述掃描補足所有宣告位置（FR-MAN-004） |
 | `config.unknown-key` | 不認得的鍵，列出該位置可用的鍵（FR-MAN-029） |
 | `config.invalid-value` | 型別錯誤、名稱格式不符、`permissions` 超出範圍、`target` 語法錯誤等 |
 | `config.missing-key` | 缺少必要的鍵，例如 `[outputs.*]` 沒有 `target`，欄位宣告沒有 `type` |
@@ -655,7 +659,7 @@ pub mod schema {
 | `config.invalid-field-decl` | 欄位宣告不合理：`options` 為空或重複、`min` 大於 `max`、`min`/`max` 用在不適用的型別等 |
 | `config.missing-manifest` | 來源目錄沒有 `manifest.toml` |
 
-**隱藏的設計決定**：設定檔使用 TOML 與 toml_edit，其他 module 只看到 `RawValue`、`Located` 等本 module 的型別；BOM、換行與行號的對應；逐表格檢查的方式；找出重複的第一處的方法；內建資源的嵌入方式與合併演算法。
+**隱藏的設計決定**：設定檔使用 TOML 與 toml_edit，其他 module 只看到 `RawValue`、`Located` 等本 module 的型別；BOM、換行與行號的對應；逐表格檢查的方式；找出重複輸出宣告位置的方式；內建資源的嵌入方式與合併演算法。
 
 ### 4.4 ValueResolver
 
