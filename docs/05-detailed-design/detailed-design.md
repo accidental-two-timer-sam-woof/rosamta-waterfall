@@ -157,7 +157,7 @@ USE-003 要求的四項內容中，範本路徑、行號與原因或欄位名稱
 
 ### 3.1 crate 劃分
 
-程式以 Cargo workspace 分成四個 crate：
+程式以儲存庫根目錄的 `Cargo.toml` 定義 Cargo workspace，分成四個同層 crate。`rosamta/` 是預設建置與執行的成員，四個 crate 共用根目錄的 `Cargo.lock`。`prototypes/pilot/` 有獨立的工具鏈與鎖檔。下表列出第一版的依賴，骨架實際引入的套件見 §3.4。
 
 | crate | 種類 | 內容 | 依賴的 workspace crate | 外部 crate |
 | --- | --- | --- | --- | --- |
@@ -226,6 +226,25 @@ core 的 module 分成四層。依賴只能指向較低的層，或下表「可�
 | `rosamta` | `main`、`cli`、`args`、`run`、`output`、`term` | 子指令、參數與輸出格式（§9.10） |
 
 `unix` 與 `windows` 以 `#[cfg]` 選擇，對外只提供同一個 `FileSystem` 實作的建構函式。
+
+### 3.4 開發骨架的實作範圍
+
+根目錄以 `rust-toolchain.toml` 固定 Rust 1.99.1、rustfmt 與 Clippy，各成員採用 edition 2024，宣告最低 Rust 1.99。
+
+| 位置 | 此階段已接上的功能 | 下一階段銜接點 |
+| --- | --- | --- |
+| `rosamta/` | clap 指令樹、`--help`、`help`、`--version`、基本參數檢查、文字與 JSON 診斷 | 在 `run` 建立 platform 與 core 服務，逐個接上子指令 |
+| `rosamta-core/` | §3.2 的 module 分層、名稱與欄位引用型別、模組或欄位的查詢參數、基本診斷 | 在對應 module 加入 §4 的設定型別、I/O trait 與服務 |
+| `rosamta-platform/` | Linux／macOS 與 Windows 的 `cfg` 入口，以及 `host`、`git` 的 module 位置 | 實作主機資訊、以 handle 為基準的檔案操作與 Git 程序介面 |
+| `rosamta-testkit/` | 測試用暫存 home 與子程序環境，供 CLI integration test 使用 | 隨 core 的 trait 補上同步點與故障注入 |
+
+骨架鎖定 clap 4.6.7、serde 1.0.229、serde_json 1.0.154，testkit 使用 tempfile 3.27.0，core 的架構測試使用 syn 3.0.10。其餘 §3.1 的套件在對應功能接上時引入。名稱檢查採用 §4.1 的規則。目前診斷只含 `severity`、`code` 與 `message`，來源位置、警告及 `Reported` 隨設定載入與服務介面加入。
+
+`run` 目前對尚未接上服務的指令回報 `cli.not-implemented`，包括 `schema`。通過參數解析後一律回傳 `1`，也不讀取或修改本機設定、來源、狀態與目標檔案。`--format json` 使用 §9.6 的外層欄位，`result` 為 `null`，診斷另送到標準錯誤。clap 參數錯誤採文字輸出。使用 clap 產生的 `help` 子指令時，`--format` 須放在 `help` 前面，輸出仍為文字。已檢查名稱、欄位引用、`--set` 左側格式與不相容的參數組合。路徑正規化、TOML 值轉換、主機資訊、色彩及 §9.5 的 panic hook 隨對應功能實作。
+
+`rosamta/tests/cli.rs` 驗證空白 home 的說明、參數錯誤、exit code、輸出串流與 home 沒有被寫入。`rosamta-core/tests/architecture.rs` 檢查 module 與 `crate::` 依賴方向；§11.3 的建構函式限制會在相應型別加入時一併檢查。`.github/workflows/workspace.yml` 在三平台執行格式檢查、Clippy 與 workspace 測試。標準使用者與平台檔案操作的驗收見 §7–§8，現有 pilot 使用獨立流程。
+
+使用者可執行的指令及建置方式記在[操作手冊](../06-user-manual/user-manual.md)。實作改變介面、資料格式或行為時，請在同一個 PR 更新 05 的對應章節與圖。
 
 ## 4. 類別詳細規格
 
@@ -2772,6 +2791,8 @@ A16 第三列的預期依 §6.5 的快照方式而定：快照是邊讀邊計算
 ### 9.1 子指令
 
 IF-001 的每項操作是 `rosamta` 的一個子指令。預覽、摘要與套用沿用 git 與 chezmoi 的 `diff`、`status`、`apply`（SRS §3.1.1）。
+
+下表是第一版的指令與服務對應。骨架目前的執行行為見 §3.4。
 
 | 子指令 | SRS 的操作 | 鎖定（§6.7） | 呼叫 |
 | --- | --- | --- | --- |

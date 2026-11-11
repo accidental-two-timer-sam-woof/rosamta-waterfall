@@ -1,0 +1,24 @@
+name: workspace
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint the workspace
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Test the workspace
+        run: cargo test --locked --workspace

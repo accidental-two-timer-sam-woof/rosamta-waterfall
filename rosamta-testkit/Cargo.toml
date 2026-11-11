@@ -1,0 +1,15 @@
+[package]
+name = "rosamta-testkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rosamta-core.workspace = true
+rosamta-platform.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

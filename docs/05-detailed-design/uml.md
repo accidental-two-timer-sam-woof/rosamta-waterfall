@@ -6,6 +6,8 @@
 
 對應 §3.1。`rosamta-platform` 到 `rosamta-core` 的箭頭同時表示實作 core 定義的 trait。`rosamta-testkit` 只供測試使用，哪些測試使用它見 §8。
 
+P1 與 P2 描述第一版的依賴。四個 crate 與 module 的實作進度，以及骨架階段引入的測試依賴見[詳細設計 §3.4](detailed-design.md#34-開發骨架的實作範圍)。
+
 ```mermaid
 flowchart TB
     bin["rosamta<br/>執行檔：命令列介面"]

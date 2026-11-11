@@ -1,0 +1,2 @@
+disallowed-methods = ["std::io::stdin"]
+disallowed-types = ["std::net::TcpListener", "std::net::TcpStream", "std::net::UdpSocket"]
