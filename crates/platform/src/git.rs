@@ -9,12 +9,22 @@ use rosamta_core::{
 use std::process::{Command, Stdio};
 
 impl GitClient for SystemFs {
-    fn clone_into(&self, url: &str, staging: &HomePath) -> Result<String, String> {
+    fn clone_into(
+        &self,
+        url: &str,
+        staging: &HomePath,
+        expected_identity: &str,
+    ) -> Result<(), String> {
         let chain = self
             .chain(staging.as_str())
             .map_err(|error| format!("{staging}: {error}"))?;
         let dir = chain.last().ok_or("missing staging directory handle")?;
         let id = dir.id().map_err(|error| error.to_string())?;
+        if id != expected_identity {
+            return Err(format!(
+                "{staging}: staging directory changed before cloning"
+            ));
+        }
         let mut command = Command::new("git");
         command
             .args([
@@ -58,6 +68,6 @@ impl GitClient for SystemFs {
                 String::from_utf8_lossy(&output.stderr).trim()
             ));
         }
-        Ok(id)
+        Ok(())
     }
 }

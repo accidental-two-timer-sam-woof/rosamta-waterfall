@@ -43,6 +43,18 @@ impl SystemFs {
         self.walk(parts, false)
     }
 
+    fn verify_chain(&self, parts: &str, parent: &Dir) -> io::Result<()> {
+        #[cfg(unix)]
+        if Dir::home(&self.home)?.id()? != self.root.id()? {
+            return Err(io::Error::other("home moved after opening it"));
+        }
+        let fresh = self.chain(parts)?;
+        if fresh.last().unwrap_or(&self.root).id()? != parent.id()? {
+            return Err(io::Error::other("directory changed after opening it"));
+        }
+        Ok(())
+    }
+
     fn walk(&self, parts: &str, create: bool) -> io::Result<Vec<Dir>> {
         let mut chain = Vec::new();
         for part in parts.split('/').filter(|part| !part.is_empty()) {
@@ -125,17 +137,7 @@ impl FileSystem for SystemFs {
             .unwrap_or(("", path.as_str()));
         let chain = self.walk(parts, expected.is_none() && replacement.is_some())?;
         let parent = chain.last().unwrap_or(&self.root);
-        let verify = || {
-            #[cfg(unix)]
-            if Dir::home(&self.home)?.id()? != self.root.id()? {
-                return Err(io::Error::other("home moved after opening it"));
-            }
-            let fresh = self.chain(parts)?;
-            if fresh.last().unwrap_or(&self.root).id()? != parent.id()? {
-                return Err(io::Error::other("target parent changed after opening it"));
-            }
-            Ok(())
-        };
+        let verify = || self.verify_chain(parts, parent);
         #[cfg(unix)]
         {
             parent.change(
@@ -201,7 +203,13 @@ impl FileSystem for SystemFs {
             .rsplit_once('/')
             .unwrap_or(("", path.as_str()));
         match self.chain(parts) {
-            Ok(chain) => chain.last().unwrap_or(&self.root).entry(OsStr::new(name)),
+            Ok(chain) => {
+                let parent = chain.last().unwrap_or(&self.root);
+                let entry = parent.entry(OsStr::new(name))?;
+                #[cfg(unix)]
+                self.verify_chain(parts, parent)?;
+                Ok(entry)
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
         }
@@ -209,7 +217,13 @@ impl FileSystem for SystemFs {
 
     fn children(&self, path: &HomePath) -> io::Result<Vec<String>> {
         match self.chain(path.as_str()) {
-            Ok(chain) => chain.last().unwrap_or(&self.root).names(),
+            Ok(chain) => {
+                let directory = chain.last().unwrap_or(&self.root);
+                let names = directory.names()?;
+                #[cfg(unix)]
+                self.verify_chain(path.as_str(), directory)?;
+                Ok(names)
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(error) => Err(error),
         }

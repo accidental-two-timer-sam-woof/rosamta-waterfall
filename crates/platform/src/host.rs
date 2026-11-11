@@ -22,5 +22,13 @@ pub fn collect() -> io::Result<HostContext> {
     let hostname = hostname::get()?
         .into_string()
         .map_err(|_| io::Error::other("hostname is not UTF-8"))?;
-    Ok(HostContext::new(platform, hostname, path, env::vars_os()))
+    let actual = std::fs::canonicalize(&path)?;
+    #[cfg(windows)]
+    let actual = actual
+        .to_str()
+        .and_then(|path| path.strip_prefix(r"\\?\"))
+        .map_or(actual.clone(), std::path::PathBuf::from);
+    let mut host = HostContext::new(platform, hostname, path, env::vars_os());
+    host.actual_home = Some(actual);
+    Ok(host)
 }

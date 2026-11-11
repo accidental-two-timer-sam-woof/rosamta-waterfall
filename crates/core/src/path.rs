@@ -40,19 +40,23 @@ impl HomePath {
 
     pub fn from_absolute(path: &Path, host: &HostContext) -> Result<Self, String> {
         let path = normalize(path)?;
-        let home = normalize(&host.home)?;
-        let mut parts = path.components();
-        for expected in home.components() {
-            let equal = parts.next().is_some_and(|actual| match host.platform {
-                Platform::Windows => actual
-                    .as_os_str()
-                    .eq_ignore_ascii_case(expected.as_os_str()),
-                _ => actual == expected,
-            });
-            if !equal {
-                return Err(format!("{} is outside the home directory", path.display()));
-            }
-        }
+        let parts = std::iter::once(&host.home)
+            .chain(host.actual_home.iter())
+            .find_map(|home| {
+                let home = normalize(home).ok()?;
+                let mut parts = path.components();
+                home.components()
+                    .all(|expected| {
+                        parts.next().is_some_and(|actual| match host.platform {
+                            Platform::Windows => actual
+                                .as_os_str()
+                                .eq_ignore_ascii_case(expected.as_os_str()),
+                            _ => actual == expected,
+                        })
+                    })
+                    .then_some(parts)
+            })
+            .ok_or_else(|| format!("{} is outside the home directory", path.display()))?;
         let parts = parts
             .map(|part| part.as_os_str().to_str().ok_or("path must be UTF-8"))
             .collect::<Result<Vec<_>, _>>()?;
@@ -116,7 +120,9 @@ impl HomePath {
         &self.0
     }
     pub fn to_absolute(&self, host: &HostContext) -> PathBuf {
-        host.home.join(&self.0)
+        let mut path = host.home.clone();
+        path.extend(self.0.split('/'));
+        path
     }
     pub fn join(&self, suffix: &str) -> Result<Self, String> {
         let suffix = Self::relative(suffix)?;

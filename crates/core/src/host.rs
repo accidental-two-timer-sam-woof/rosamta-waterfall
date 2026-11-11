@@ -28,6 +28,7 @@ pub struct HostContext {
     pub platform: Platform,
     pub hostname: String,
     pub home: PathBuf,
+    pub actual_home: Option<PathBuf>,
     env: Vec<(OsString, OsString)>,
 }
 
@@ -42,6 +43,7 @@ impl HostContext {
             platform,
             hostname,
             home,
+            actual_home: None,
             env: env.into_iter().collect(),
         }
     }

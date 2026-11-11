@@ -13,10 +13,17 @@ use rustix::fs::{self, AtFlags, CWD, FileType, Mode, OFlags, Stat};
 
 pub(super) struct Dir(OwnedFd);
 
+#[cfg_attr(target_os = "linux", allow(clippy::useless_conversion))] // macOS uses a u16 mode.
 pub(super) fn creation_mode() -> u32 {
     let current = rustix::process::umask(Mode::from_raw_mode(0o777));
     rustix::process::umask(current);
-    0o666 & !current.as_raw_mode()
+    0o666 & !u32::from(current.as_raw_mode())
+}
+
+fn unix_mode(mode: u32) -> Mode {
+    #[cfg(target_os = "macos")]
+    let mode = mode as u16;
+    Mode::from_raw_mode(mode)
 }
 
 impl Dir {
@@ -26,9 +33,10 @@ impl Dir {
             unix::process::CommandExt,
         };
         let fd = self.0.as_raw_fd();
-        // fchdir is async-signal-safe. The caller keeps the directory open until Git exits.
+        // Both calls are async-signal-safe. The caller keeps the directory open until Git exits.
         unsafe {
             command.pre_exec(move || {
+                rustix::process::setsid()?;
                 rustix::process::fchdir(BorrowedFd::borrow_raw(fd)).map_err(Into::into)
             });
         }
@@ -219,7 +227,7 @@ impl Dir {
                 .unwrap_or(creation_mode);
             let prepared = (|| -> io::Result<Entry> {
                 file.write_all(replacement.bytes)?;
-                fs::fchmod(&file, Mode::from_raw_mode(mode))?;
+                fs::fchmod(&file, unix_mode(mode))?;
                 file.sync_all()?;
                 Ok(Entry {
                     kind: Kind::Regular,
@@ -327,11 +335,11 @@ impl Dir {
             return Err(io::Error::other("target changed before changing its mode"));
         }
         verify()?;
-        fs::fchmod(&fd, Mode::from_raw_mode(mode))?;
+        fs::fchmod(&fd, unix_mode(mode))?;
         let check = fs::statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW);
         if !matches!(check, Ok(stat) if identity(&stat) == expected.identity) || verify().is_err() {
             if let Some(previous) = expected.mode {
-                fs::fchmod(&fd, Mode::from_raw_mode(previous))?;
+                fs::fchmod(&fd, unix_mode(previous))?;
             }
             return Err(io::Error::other("target moved during mode change"));
         }

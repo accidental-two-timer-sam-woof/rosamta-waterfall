@@ -11,7 +11,12 @@ use crate::{
 };
 
 pub trait GitClient {
-    fn clone_into(&self, url: &str, staging: &HomePath) -> Result<String, String>;
+    fn clone_into(
+        &self,
+        url: &str,
+        staging: &HomePath,
+        expected_identity: &str,
+    ) -> Result<(), String>;
 }
 
 pub struct Request<'a> {
@@ -68,9 +73,17 @@ pub fn initialize(
             ));
         }
         let staging = new_stage(fs, &source, request.batch)?;
-        let identity = match git.clone_into(repo, &staging) {
-            Ok(identity) => identity,
+        let staged = fs
+            .inspect(&staging)
+            .map_err(|error| format!("{staging}: {error}"))?
+            .filter(|entry| entry.kind == Kind::Directory)
+            .ok_or_else(|| format!("{staging}: staging directory is missing"))?;
+        match git.clone_into(repo, &staging, &staged.identity) {
+            Ok(()) => {}
             Err(error) => {
+                if !matches!(fs.inspect(&staging), Ok(Some(ref current)) if current == &staged) {
+                    return Err(format!("{error}; staging directory changed at {staging}"));
+                }
                 return match fs.remove_empty_directory(&staging) {
                     Ok(()) => Err(error),
                     Err(_) => Err(format!(
@@ -78,13 +91,13 @@ pub fn initialize(
                     )),
                 };
             }
-        };
+        }
         let updated_local =
             match store_local(fs, &local_path, local_before.as_ref(), &after, &mut changes) {
                 Ok(entry) => entry,
                 Err(error) => return Err(format!("{error}; cloned source remains at {staging}")),
             };
-        if let Err(error) = fs.publish_directory(&staging, &identity, &source) {
+        if let Err(error) = fs.publish_directory(&staging, &staged.identity, &source) {
             let rollback = if let Some(entry) = &updated_local {
                 let previous = local_before.as_ref().map(|entry| Replacement {
                     bytes: &entry.bytes,

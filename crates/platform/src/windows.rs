@@ -149,7 +149,11 @@ fn current_user_sid() -> io::Result<String> {
 
 impl Dir {
     pub(super) fn enter_child_process(&self, command: &mut std::process::Command) {
-        command.current_dir(&self.path);
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+        command
+            .current_dir(&self.path)
+            .creation_flags(CREATE_NO_WINDOW);
     }
 
     pub(super) fn publish(
