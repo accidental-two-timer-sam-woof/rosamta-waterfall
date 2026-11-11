@@ -2792,7 +2792,7 @@ IF-001 的每項操作是 `rosamta` 的一個子指令。預覽、摘要與套�
 
 ### 9.2 參數與選項
 
-**共通**：`--format <text 或 json>`，預設為 `text`，寫在子指令的前後都可以。每個子指令都接受，`json` 的格式見 §9.6。IF-004 只要求預覽、套用、摘要、查詢與列出輸出；其他子指令也提供，AI 助理才能以同一種方式讀取所有結果與診斷。
+**共通**：`--format <text 或 json>`，預設為 `text`，寫在子指令的前後都可以。每個子指令都接受，`json` 的格式見 §9.6。IF-004 只要求預覽、套用、摘要、查詢與列出輸出；其他子指令也提供，AI 助理才能以同一種方式讀取所有結果與診斷。`help`、`--help` 與 `--version` 例外：接受 `--format`，但一律以文字輸出。說明是給人讀的固定文字，IF-004 也沒有要求；程式要讀取設定檔的格式，使用 `schema`。
 
 **處理方式**：`diff`、`status`、`apply` 與指定了 `<repo>` 的 `init` 接受下列選項，轉成 `Choices`（§4.12）。預覽也接受，因為 FR-DRF-003 要求預覽依本次指定的模式與處理方式，說明套用時的處理。
 
@@ -2970,7 +2970,7 @@ error[preflight.collision]: outputs "nvim" and "nvim-work" have the same target 
 
 - 標準輸出只有一個 JSON 文件，以換行結束。子指令失敗時同樣輸出。只有沒有產生結果時，`result` 才是 `null`，例如預檢失敗、取不到鎖定，或初始化在取得來源時失敗。`apply` 回傳了套用回報時，即使 `outcome` 為 `failed`、exit code 為 `1`，`result` 仍是完整的回報，包括逐項的 `items`、`failure` 與 `recovery`（FR-APL-003–005），exit code 依 §9.7 由 `outcome` 決定。`init` 的 `apply` 欄位相同。
 - 標準錯誤的每個診斷是一行 JSON（JSON Lines），包括 §9.5 由執行錯誤轉成的診斷。錯誤與警告不出現在標準輸出（IF-008）。
-- 參數錯誤時以文字輸出（§9.2）。
+- 參數錯誤，以及 `help`、`--help`、`--version`，以文字輸出（§9.2）。
 
 ```
 {
