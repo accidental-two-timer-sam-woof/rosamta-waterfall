@@ -2,7 +2,7 @@
 
 ## 1. 範圍與依據
 
-[SRS 1.3](../02-srs/srs.md) §3 與附錄 A.3 定義首版需求與追溯編號。測試步驟和預期結果以 [05 詳細設計](../05-detailed-design/detailed-design.md) 為準，包含 §12.3 對 SRS 驗收條件的解讀。首版納入 117 條 essential 與 23 條 conditional 需求，共 140 條。
+[SRS 1.4](../02-srs/srs.md) §3 與附錄 A.3 定義首版需求與追溯編號。測試步驟和預期結果以 [05 詳細設計](../05-detailed-design/detailed-design.md) 為準，包含 §12.3 對 SRS 驗收條件的解讀。首版納入 117 條 essential 與 23 條 conditional 需求，共 140 條。
 
 | 延後功能 | 需求 |
 | --- | --- |
@@ -15,7 +15,7 @@ A1–A26 對照 [04 設計分析](../04-design-analysis/design-analysis.md) §5�
 
 ### 1.1 儲存庫基準
 
-基準 commit `9efe48d` 的 `src/` 與 `tests/` 僅有 `.gitkeep`，產品 CLI 與測試尚未實作。[原型](../../prototypes/pilot/README.md) 由 [pilot workflow](../../.github/workflows/pilot.yml) 執行，跨平台驗證結果見 05 §7.1。
+基準 commit `0f19216` 的 `src/` 與 `tests/` 僅有 `.gitkeep`，產品 CLI 與測試尚未實作。[原型](../../prototypes/pilot/README.md) 由 [pilot workflow](../../.github/workflows/pilot.yml) 執行，跨平台驗證結果見 05 §7.1。
 
 | 原型 | 已有驗證 | 產品案例 |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ Windows 開發人員模式關閉時，由環境管理者在同一磁碟區預建
 | --- | --- | --- | --- |
 | CLI-01 指令與說明 | 在未初始化、無來源目錄且網路隔離的環境執行 `help`、`--help`、`--version`，遍歷 05 §9.1 的子指令及 `query` 的子指令 | 所有首版操作由同一執行檔提供。每份說明包含用途、參數、可能的 exit code 與至少一個範例，exit code 為 0 | IF-001–002 |
 | CLI-02 Exit code 與輸出串流 | 逐一執行子指令的成功與失敗案例。涵蓋錯誤參數、不存在的查詢對象與可繼續執行的警告。需解析程式目錄的指令另測無效的 `XDG_*`。以正常套用及預檢失敗驗證串流 | 一般子指令成功為 0、失敗為 1，套用與首次套用依 APL-02。結果在 stdout，診斷在 stderr。非終端機且使用無控制字元的測試資料時，兩個串流均無 ESC。另以終端機及 `NO_COLOR` 驗證兩個串流各自的色彩行為 | IF-007–009 |
-| CLI-03 JSON 契約 | 依 05 §9.6 的結果欄位表，用相同初始資料比較文字與 JSON 輸出。`apply` 測成功、部分完成、預檢失敗、執行失敗及回復失敗。`init` 分別測取得來源失敗，以及來源與本機設定就緒後，首次套用的預檢、執行或回復失敗 | stdout 為一份以換行結尾的 JSON 文件，stderr 每行為一個 JSON 診斷。比對路徑、動作、結果、原因、欄位型別及空值。`apply` 預檢失敗與 `init` 取得來源失敗時，`result` 為 `null`。`init` 首次套用預檢失敗時回傳 1，`result` 保留 `source`、`source_created` 與 `changes`，`result.apply` 為 `null`。已有套用回報時，exit code 為 1 仍保留逐項結果、`failure` 與 `recovery`，分別位於 `apply` 的 `result` 或 `init` 的 `result.apply`。參數解析失敗以文字診斷回傳 1 | IF-004、IF-008、FR-APL-003–005、FR-INI-011 |
+| CLI-03 JSON 契約 | 依 05 §9.6 的結果欄位表，用相同初始資料比較文字與 JSON 輸出。`apply` 測成功、部分完成、預檢失敗、執行失敗及回復失敗。`init` 分別測取得來源失敗，以及來源與本機設定就緒後，首次套用的預檢、執行或回復失敗。另比較 `help --format json`、`--format json --help`、`--format json --version` 與省略 `--format` 的輸出 | 適用 JSON 契約的指令在 stdout 輸出一份以換行結尾的 JSON 文件，stderr 每行為一個 JSON 診斷。比對路徑、動作、結果、原因、欄位型別及空值。`apply` 預檢失敗與 `init` 取得來源失敗時，`result` 為 `null`。`init` 首次套用預檢失敗時回傳 1，`result` 保留 `source`、`source_created` 與 `changes`，`result.apply` 為 `null`。已有套用回報時，exit code 為 1 仍保留逐項結果、`failure` 與 `recovery`，分別位於 `apply` 的 `result` 或 `init` 的 `result.apply`。參數解析失敗以文字診斷回傳 1。說明與版本指令在 stdout 輸出相同的純文字，回傳 0 | IF-004、IF-008、FR-APL-003–005、FR-INI-011 |
 | CLI-04 不等待輸入、離線執行 | 每個子指令使用保持開啟且沒有資料的非終端機 stdin，涵蓋 drift 與未接管檔。另把 `apply` 的 stdin 導向 `/dev/null` 或 `NUL`。在有、無網路兩種環境執行非遠端初始化與其餘指令，監測程序及子程序的連線嘗試 | 指令在 10 秒內結束且無提示。空裝置案例的 drift 項目略過，其他項目完成，exit code 為 2。離線結果與連線時一致，無連線嘗試。首版依 05 §12.3 採非互動驗收 | IF-013、USE-001–002 |
 | CFG-01 設定語法與錯誤位置 | 四種 TOML 設定加中文註解，另測 BOM、LF、CRLF、UTF-8 多行字串。以文字編輯器加入輸出。分別送入不合法 UTF-8、錯誤語法、重複輸出名稱及拼錯的鍵 | 合法變體的計畫一致，新宣告的輸出可套用。錯誤指出檔案、位置與原因，未知鍵另列可用鍵，重複名稱列出各處宣告。目標與狀態檔維持原狀 | IF-010、FR-MAN-004、FR-MAN-028–029 |
 | CFG-02 格式說明 | 執行 `schema manifest`、`schema module`、`schema profile` 與 `schema local`，用各自的範例建立設定，並對照 05 §5 的檔案格式。另執行 `schema builtin` 與 `schema builtin theme`，比對 05 §5.6 的內建欄位宣告 | 四種設定檔的說明列出每個鍵的名稱、TOML 型別、是否必填、預設值和說明，範例皆可載入並通過預檢。內建模組說明列出欄位名稱、型別、是否必填、範圍或格式、預設值和說明。指定模組時只列該模組，欄位與完整清單一致 | IF-005–006 |
@@ -179,8 +179,10 @@ clone 與移入案例使用實際 git 及本機測試 repo。撤回案例用 `Fa
 
 | 同步點 | 操作 | 驗收條件 |
 | --- | --- | --- |
-| `BeforeOperation`（`SourceClone`） | clone 前，把暫存目錄的上層換成指向測試 home 外的符號連結 | Windows 擋下替換，clone 照常完成。Linux 與 macOS 的 git 寫入持有的原暫存目錄，連結指向的位置無寫入。重檢失敗後回報 `init.stale`，不使用這次取得的來源 |
+| `BeforeOperation`（`SourceClone`） | clone 前，把暫存目錄的上層換成指向測試 home 外的符號連結 | Windows 擋下替換，clone 照常完成。Linux 與 macOS 的 git 寫入持有的原暫存目錄，連結指向的位置無寫入。重檢失敗後回報 `init.stale`，診斷指出 git 寫入的檔案可能位於 home 外。不使用這次取得的來源 |
 | `BeforeOperation`（`SourceClone`） | clone 前，把暫存目錄的上層整個搬到測試 home 外 | Windows 擋下搬移，clone 照常完成。Linux 與 macOS 的 git 寫入搬出去的原暫存目錄。重檢失敗後回報 `init.stale`，診斷指出 git 寫入的檔案可能位於 home 外。不使用這次取得的來源，也不刪除 home 外的檔案 |
+| `BeforeOperation`（`SourceClone`） | clone 前，把暫存目錄的上層整個搬到測試 home 外，並讓 git 回傳非零退出狀態 | Windows 擋下搬移，路徑重檢通過後清理暫存目錄，回報 `init.clone-failed`。Linux 與 macOS 先重檢路徑，發現失效時回報 `init.stale`，列出暫存目錄原本的位置、git 的退出狀態和錯誤訊息，並提醒 git 可能已寫入 home 外。home 外的暫存目錄與檔案保留。各平台皆回傳 1，未建立正式來源或本機設定，也未執行首次套用 |
+| 兩次執行之間 | 回報 `init.stale` 後，把保留的暫存目錄搬回原位，使用同一來源位置再次初始化 | 回報 `init.staging-exists`，列出暫存目錄位置並回傳 1。暫存目錄及其中檔案保留，未建立正式來源或本機設定 |
 | `BeforeOperation`（`SourceMoveIn`、`LocalWrite`） | 分別在移入來源及寫入本機設定前，變更父目錄的位置，或換成指向測試 home 外的連結 | 替代位置無寫入。路徑變動導致操作失敗時，不執行首次套用。移入因路徑變動失敗時回報 `init.stale`，不建立本機設定。平台擋下替換時依 §2.2 核對原操作結果 |
 | `BeforeOperation`（`SourceWithdraw`） | 分別讓來源保持原狀、在清單比對前新增或修改檔案。另測移回時正式位置已被占用 | 清單相同時清除來源，可重試初始化。清單不同時保留整個來源並移回正式位置。正式位置被占用時，來源留在暫存位置。兩種保留情況均回報 `init.rollback-kept` 並列出保留位置 |
 | `BeforeOperation`（`SourceRemove`） | 清單比對通過後、刪除前，分別新增檔案或替換既有檔案 | 保留新增或替換的項目及其上層目錄，刪除其餘項目，回報 `init.rollback-kept` 與暫存位置 |
@@ -197,7 +199,7 @@ clone 與移入案例使用實際 git 及本機測試 repo。撤回案例用 `Fa
 | PLAT-04 檔案系統能力 | A7、A15、A18–A19、A21–A23 | 用受控的額外檔案系統驗證缺少 hard link、不覆蓋改名或交換式改名。無法不覆蓋建立或移入時回報失敗，已存在的資料仍可讀。刪除時無法移回的項目保留在暫存名稱並附位置。交換不支援時核對退回單次改名的結果及 05 §6.3 的保護範圍 | ASM-16–18 | DC-002–003、FR-APL-002–004、FR-INI-009 |
 | PLAT-05 權限與特殊檔案 | A13、A18、MAN-03 | Windows 比對目錄與子項目的 DACL，以及取代前後原檔的明確或不繼承 DACL。Unix 以隔離的測試裝置檔與無寫入端的 FIFO 驗證分類與時限，確認不讀取其內容 | ASM-19、ASM-21 | FR-MAN-016、SEC-003、USE-001 |
 | PLAT-06 互斥 | A5 | 任選兩個寫入子指令使用同一狀態目錄並重疊執行，第一個仍持有鎖定時，第二個即回傳 1 並指出鎖定路徑。唯讀指令也能在鎖定釋放前結束且無寫入。持有者被終止後下一個寫入指令可立即取得鎖定 | ASM-20 | FR-MAN-025、FR-PLN-004、FR-QRY-006、USE-001 |
-| PLAT-07 Git 與來源撤回 | A7、INI-01、INI-02 | 以實際 HTTPS 與 SSH 測試下載、失敗、離線及來源移入。Windows 需要憑證時，Git Credential Manager 與 SSH askpass 不得開啟登入視窗或等待輸入。另以本機測試 repo 在 clone 進行中搬移或替換暫存目錄的上層。Windows 應擋下變動。Linux 與 macOS 發現路徑失效時應回報 `init.stale`，不使用這次取得的來源，並保留 git 在測試 home 外寫入的資料。另在 Linux 與 macOS 的 `BeforeOperation`（`SourceWithdraw`）修改來源檔，保持大小並還原修改時間。撤回時仍須保留該檔並回報 `init.rollback-kept` | ASM-22–23 | DC-002、IF-012、FR-INI-006、FR-INI-009–010、USE-001 |
+| PLAT-07 Git 與來源撤回 | A7、INI-01、INI-02 | 以實際 HTTPS 與 SSH 測試下載、失敗、離線及來源移入。Windows 需要憑證時，Git Credential Manager 與 SSH askpass 不得開啟登入視窗或等待輸入。另以本機測試 repo 在 clone 進行中搬移或替換暫存目錄的上層，涵蓋 git 成功與失敗。Windows 應擋下變動。Linux 與 macOS 若在重檢時發現路徑仍失效，須回報 `init.stale`，並提醒 git 可能已寫入 home 外。保留測試 home 外的檔案，不使用這次取得的來源。git 失敗時，確認重檢先於清理，並依 §5.1 核對退出狀態與錯誤訊息。另在 Linux 與 macOS 的 `BeforeOperation`（`SourceWithdraw`）修改來源檔，保持大小並還原修改時間。撤回時仍須保留該檔並回報 `init.rollback-kept` | ASM-22–23 | DC-002、IF-012、FR-INI-006、FR-INI-009–010、USE-001 |
 
 ASM-06、ASM-07、ASM-18、ASM-22 與 ASM-23 的平台限制見 05 §6.3、§7、§12.3 及 SRS §3.5。驗收時附上測試環境、平台拒絕的操作及原始結果。
 
