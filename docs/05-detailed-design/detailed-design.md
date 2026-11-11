@@ -50,7 +50,7 @@
 
 延後互動模式後，04 §6 的「非嚴格模式的互動」不再適用；03 §11 提到的 `DependencyChecker` 也不建立。
 
-延後的需求依 SRS 附錄 A.3 的規定，要記錄在 A.3 與修訂紀錄，這部分另開 PR 修訂 SRS。USE-002 的驗收條件以「啟用互動」為前提，延後互動模式後如何滿足，見 §12。
+延後的需求依 SRS 附錄 A.3 的規定，記錄在 A.3 與修訂紀錄（SRS 1.2 版）。USE-002 的驗收條件以「啟用互動」為前提，延後互動模式後如何滿足，見 §12。
 
 ## 2. 技術選擇
 
@@ -1199,6 +1199,8 @@ pub trait FileSystem {
     fn case_sensitive(&self, dir: &HomePath) -> Result<bool, FsError>;
     /// 走訪 at 之下的整個目錄樹。走訪經由從 home 起持有的 handle，結束時依 §6.3 步驟 4 確認路徑仍通往 at。
     fn list_tree(&self, at: &HomePath) -> Result<TreeListing, FsError>;
+    /// 從 home 走訪到 expect 的目錄，核對每一層的身分，持有每一層的 handle 直到 drop（§6.3 初始化）。
+    fn hold_dir<'a>(&'a self, lock: &'a WriteLock, expect: &Observation) -> Result<Box<dyn HeldDir + 'a>, FsError>;
     /// 讀取一般檔案的綁定版本：prepare 走訪並核對類型，execute 經由持有的 handle 開檔讀取，
     /// confirm 重新走訪（§6.3）。其他類型以 FsErrorKind::NotRegular 失敗。
     fn prepare_read<'a>(&'a self, at: &HomePath) -> Result<Box<dyn Prepared + 'a>, FsError>;
@@ -1218,6 +1220,14 @@ pub trait FileSystem {
 }
 
 pub trait Prepared { fn execute(self: Box<Self>) -> Result<Box<dyn Executed>, FsError>; }
+pub trait HeldDir {
+    fn at(&self) -> &HomePath;
+    /// git 的工作目錄：Linux 與 macOS 為持有的目錄 fd，Windows 為實際路徑（每一層都持有中）。
+    fn work_dir(&self) -> WorkDir<'_>;
+    /// §6.3 步驟 4：從 home 再走訪一次，確認路徑仍通往持有的目錄。
+    fn recheck(&self) -> Result<(), FsError>;
+}
+pub enum WorkDir<'a> { #[cfg(unix)] Fd(BorrowedFd<'a>), #[cfg(windows)] Path(&'a Path) }
 pub trait Executed { fn confirm(self: Box<Self>) -> Result<OpOutcome, FsError>; }
 pub trait LockGuard {}
 ```
@@ -1330,7 +1340,7 @@ pub enum OpKind {
     Capture, Backup, Create, Replace, Delete, SetMode, CreateDir,    // 目標
     RevertDelete, RevertReplace, RevertCreate, RevertSetMode, RevertRemoveDir, // 回復
     ManifestWrite, LocalWrite, SourceCopy, SourceMoveIn,             // 管理與初始化
-    SourceWithdraw, SourceRemove,                                    // 初始化撤回來源目錄（§4.16 第 5 步）
+    SourceClone, SourceWithdraw, SourceRemove,                       // 初始化的 clone 與撤回來源目錄（§4.16）
 }
 ```
 
@@ -1776,8 +1786,8 @@ C4 的 `run(request)` 分成 `preview` 與 `apply`：只有套用要求 `&WriteL
 
 ```rust
 pub trait GitClient {
-    /// 把 url clone 到 dest。dest 是已存在的空目錄。不讀取標準輸入，不詢問使用者。
-    fn clone_into(&self, url: &str, dest: &HomePath) -> Result<(), GitError>;
+    /// 在 dest 中 clone url。dest 是持有中的空目錄（§4.10）。不讀取標準輸入，不詢問使用者。
+    fn clone_into(&self, url: &str, dest: &dyn HeldDir) -> Result<(), GitError>;
 }
 pub enum GitError {
     NotFound,                                       // 找不到 git 執行檔
@@ -1811,16 +1821,16 @@ pub struct InitializationResult {
 }
 ```
 
-C4 的 `GitClient.cloneToStaging(url)` 改成 `clone_into(url, dest)`：暫存目錄由 `InitializationService` 經由 `FileSystem` 建立，才能依 §6.3 記下身分並在 clone 前後核對；`GitClient` 只執行 git。
+C4 的 `GitClient.cloneToStaging(url)` 改成 `clone_into(url, dest)`：暫存目錄由 `InitializationService` 經由 `FileSystem` 建立並持有，才能依 §6.3 記下身分、在 clone 期間限制 git 的寫入位置，並在 clone 後核對；`GitClient` 只執行 git。
 
-platform 的實作以 `std::process` 執行 `git clone -- <url> <dest>`：`--` 避免以 `-` 開頭的位址被當成選項；標準輸入接到空裝置，設定 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never` 與 `SSH_ASKPASS_REQUIRE=never`，git 需要帳號密碼時直接失敗，不等待輸入，也不開啟登入視窗（FR-INI-006、§9.8）。SSH 使用使用者既有的金鑰與設定（AS-4）。
+platform 的實作以 `std::process` 執行 git。Linux 與 macOS 在子程序 exec 之前以 `pre_exec` 呼叫 `fchdir`，進入 `WorkDir::Fd` 的目錄，再執行 `git clone -- <url> .`：git 以工作目錄的實際位置解析 `.`，clone 開始前路徑上的目錄被換成連結，git 仍寫入持有的目錄（ASM-22）。Windows 沒有以 handle 指定工作目錄的方式，執行 `git clone -- <url> <dest>`，由 `HeldDir` 在 clone 期間持有 home 到暫存目錄的每一層，替換被擋下（ASM-08）。`--` 避免以 `-` 開頭的位址被當成選項；標準輸入接到空裝置，設定 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never` 與 `SSH_ASKPASS_REQUIRE=never`，git 需要帳號密碼時直接失敗，不等待輸入，也不開啟登入視窗（FR-INI-006、§9.8）。SSH 使用使用者既有的金鑰與設定（AS-4）。
 
 **流程**：
 
 1. 依 `Layout::config_dir` 與 `load_local` 讀取既有的本機設定。來源目錄依序取 `req.source`、本機設定的 `source`、預設位置（§5.1），以 `Layout::with_source` 建立 `Layout`。
 2. 依 §5.2 檢查：三個目錄都不等於 home，彼此的位置鍵沒有 `Same`、`Ancestor` 或 `Descendant` 的關係，路徑中沒有連結。
 3. 準備來源目錄：
-   - 指定了 `repo`：來源目錄的位置不得存在，包括空目錄，否則失敗，不改動任何檔案（FR-INI-009）；空目錄的提示是先刪除它。刪除該位置旁邊殘留的 `.<名稱>.rosamta-tmp.*` 暫存目錄：鎖定保證沒有其他 rosamta 正在使用它們。建立不存在的上層目錄，在同一個目錄以 `CreateDir` 建立暫存目錄，呼叫 `clone_into`，核對暫存目錄與上層仍是建立時的身分，以 `list_tree` 記下暫存目錄的清單（第 5 步使用），再以 `MoveDir` 移到正式位置（§6.3），同步點為 `SourceMoveIn`。任一步失敗時以 `list_tree` 取得暫存目錄目前的清單，再以 `RemoveTree` 刪除暫存目錄，並刪除本次建立、仍是空的上層目錄，回報 repo 的位址與原因，不建立本機設定（FR-INI-010）。
+   - 指定了 `repo`：來源目錄的位置不得存在，包括空目錄，否則失敗，不改動任何檔案（FR-INI-009）；空目錄的提示是先刪除它。刪除該位置旁邊殘留的 `.<名稱>.rosamta-tmp.*` 暫存目錄：鎖定保證沒有其他 rosamta 正在使用它們。建立不存在的上層目錄，在同一個目錄以 `CreateDir` 建立暫存目錄，以 `hold_dir` 持有它，到達 `BeforeOperation`（`SourceClone`），呼叫 `clone_into`，以 `HeldDir::recheck` 確認路徑仍通往持有的暫存目錄，以 `list_tree` 記下暫存目錄的清單（第 5 步使用），再以 `MoveDir` 移到正式位置（§6.3），同步點為 `SourceMoveIn`。`recheck` 失敗時，表示 Linux 或 macOS 上其他程式在 clone 前後搬移或替換了路徑上的目錄，暫存目錄與 git 寫入的檔案可能在 home 外：不刪除它們，回報 `init.stale`，說明 git 寫入的檔案可能位於 home 外（SRS 3.5 節 DC-002 的適用範圍）。其他步驟失敗時以 `list_tree` 取得暫存目錄目前的清單，再以 `RemoveTree` 刪除暫存目錄，並刪除本次建立、仍是空的上層目錄，回報 repo 的位址與原因，不建立本機設定（FR-INI-010）。
    - 沒有指定 `repo`：來源目錄不存在時建立它；`manifest.toml` 不存在時以 `CreateFile` 建立空的 manifest（FR-INI-002）。既有的檔案不改動。
 4. 合併本機設定（FR-INI-008）：以 `TomlEditor` 解析既有的 `local.toml`（不存在時從空文字開始），只修改這次指定的值：
    - `req.source` 有值時，寫入 `source`，以 `~/` 開頭、以 `/` 分隔。
@@ -1844,7 +1854,7 @@ platform 的實作以 `std::process` 執行 `git clone -- <url> <dest>`：`--` �
 - 第一次套用沿用一般套用的預檢、drift 與接管的處理，回報與 exit code 都與一般套用相同（FR-INI-011）。套用失敗不撤銷已完成的初始化（03 S6）。
 - `tags` 以加入的方式合併：FR-INI-008 不允許改變這次沒有指定的值，既有的標籤屬於其中。移除標籤要編輯本機設定。
 - 指定的欄位值只檢查名稱的格式；型別與欄位是否存在，由第一次套用或之後的預覽檢查（§4.6 對所有層級檢查）。
-- 所有寫入都經由 `FileSystem` 的綁定操作；git 以路徑寫入暫存目錄，這是唯一無法綁定的寫入（§6.3）。
+- 除了 git 的寫入，所有寫入都經由 `FileSystem` 的綁定操作。git 的寫入由持有的暫存目錄限制（§6.3、ASM-22）；Linux 與 macOS 上，clone 前後的搬移與 clone 期間的替換是殘餘的情況，由 `recheck` 發現。
 
 **錯誤**：
 
@@ -1854,7 +1864,7 @@ platform 的實作以 `std::process` 執行 `git clone -- <url> <dest>`：`--` �
 | `init.layout` | 三個目錄互相包含、等於 home，或路徑中有連結（§5.2） |
 | `init.clone-failed` | git 回報失敗，附 repo 的位址、git 的 exit status 與錯誤訊息（FR-INI-010） |
 | `init.git-missing` | 找不到 `git` 執行檔 |
-| `init.stale` | clone 後暫存目錄或上層不是建立時的身分，或移入時正式位置已被占用（A7） |
+| `init.stale` | clone 後路徑不再通往持有的暫存目錄（git 寫入的檔案可能位於 home 外，不刪除），或移入時正式位置已被占用（A7） |
 | `init.write-failed` | 建立來源目錄、manifest 或本機設定失敗，附作業系統的錯誤 |
 | `init.rollback-kept` | 撤回來源目錄時，其他程式新增或修改了其中的檔案；列出來源目錄的位置與保留的項目（第 5 步） |
 | `init.concurrent-edit` | 本機設定在初始化期間被修改 |
@@ -2396,7 +2406,7 @@ Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保�
 
 - manifest 與本機設定的修改用「取代」，被取代的必須是讀取時的版本。使用者在指令執行期間以編輯器修改了檔案時，指令回報失敗，保留使用者的版本。原本不存在的本機設定用「建立」。
 - 納入管理的來源副本用「建立」。預定位置在最後一次確認後才被占用時，依 §5.4 改用下一個名稱。寫入順序是先建立副本、再修改 manifest；manifest 修改失敗時刪除本次建立的副本。
-- 初始化取得遠端來源時，先 clone 到正式位置所在目錄中的 `.<名稱>.rosamta-tmp.<程序編號>.<序號>/`，確保與正式位置在同一個檔案系統，再以不覆蓋的方式把整個目錄改名到正式位置：Linux 用 `renameat2(RENAME_NOREPLACE)`，macOS 用 `renameatx_np(RENAME_EXCL)`，Windows 用不指定取代的 `MoveFileExW`（ASM-16）。git 以路徑寫入暫存目錄，rosamta 無法綁定它的操作，只能在 clone 前後核對暫存目錄與它的上層仍是建立時的身分。
+- 初始化取得遠端來源時，先 clone 到正式位置所在目錄中的 `.<名稱>.rosamta-tmp.<程序編號>.<序號>/`，確保與正式位置在同一個檔案系統，再以不覆蓋的方式把整個目錄改名到正式位置：Linux 用 `renameat2(RENAME_NOREPLACE)`，macOS 用 `renameatx_np(RENAME_EXCL)`，Windows 用不指定取代的 `MoveFileExW`（ASM-16）。git 的寫入不經由 rosamta 的 handle，改以下列方式限制在暫存目錄內（ASM-22，pilot P7）：Linux 與 macOS 以 `fchdir` 進入持有的暫存目錄後執行 `git clone -- <url> .`；Windows 在 clone 期間持有 home 到暫存目錄的每一層，不含 `FILE_SHARE_DELETE`（ASM-08）。clone 後依步驟 4 確認路徑仍通往持有的暫存目錄。Linux 與 macOS 上仍有兩種情況：最後一次核對之後，暫存目錄或它的上層被整個搬到 home 外時，clone 寫入搬出去的目錄（同 ASM-06）；clone 進行中路徑上的目錄被換成連結時，git 已改用絕對路徑，之後的寫入可能經由連結落在 home 外。兩者都由 clone 後的核對發現，依 §4.16 回報，不刪除可能在 home 外的檔案。SRS 3.5 節把這兩種情況列入 DC-002 的適用範圍。
 
 ### 6.4 檔案的寫入與權限
 
@@ -2532,7 +2542,7 @@ pilot 結果分四種：
 
 ### 7.1 驗證環境
 
-證據來自 pilot workflow 的 CI run 42634818704，P1–P5 與發佈檢查全部通過。§7.7 的 P6 結果來自 CI run 42785134928，這個 run 也重跑了 P1–P5 與發佈檢查，全部通過；環境與下表相同，只有 ubuntu runner 的 kernel 為 7.0.0-1014-aws。runner 映像檔固定版本；正式支援的平台版本由 06 決定（PORT-001）。
+證據來自 pilot workflow 的 CI run 42634818704，P1–P5 與發佈檢查全部通過。§7.7 的 P6 結果來自 CI run 42785134928，這個 run 也重跑了 P1–P5 與發佈檢查，全部通過；環境與下表相同，只有 ubuntu runner 的 kernel 為 7.0.0-1014-aws。§7.8 的 P7 結果來自 CI run 42932273514，環境與下表相同，P1–P6 與發佈檢查也全部通過。runner 映像檔固定版本；正式支援的平台版本由 06 決定（PORT-001）。
 
 | 環境 | 作業系統 | 測試目錄的檔案系統 | 執行身分 |
 | --- | --- | --- | --- |
@@ -2608,12 +2618,21 @@ ASM-04 只在同一批次內比較檔案身分。狀態檔另外記錄目標父�
 | ASM-20 | Linux 與 macOS 的 `flock(LOCK_EX \| LOCK_NB)`，在其他程序持有鎖定時以 `EWOULDBLOCK` 失敗；Windows 以共用模式 `0` 開啟的檔案，其他程序再開啟時以 `ERROR_SHARING_VIOLATION` 失敗。兩者都在程序結束時釋放 | Linux `flock(2)`：鎖定屬於 open file description，所有相關的 fd 關閉時釋放。macOS `flock(2)`：`LOCK_NB` 時以 `EWOULDBLOCK` 失敗。`CreateFileW` 文件：共用模式為 `0` 時，其他程序無法開啟該檔案 | `flock` 不屬於 POSIX，但 Linux 與 macOS 都提供。網路檔案系統不在範圍內。不成立時，兩個 rosamta 程序可能同時套用，這超出 AS-5 的範圍，§6.3 的核對仍然有效 | 通過。三平台上，持有鎖定時另一個程序都失敗（Linux 與 macOS 為 `EWOULDBLOCK`，Windows 為 `ERROR_SHARING_VIOLATION`）。Linux 與 macOS 在同一個程序內開啟再關閉同一個檔案的另一個 fd，鎖定仍在。持有者被終止後，第一次嘗試就取得鎖定；鎖定檔沒有被刪除 |
 | ASM-21 | Linux 與 macOS 上，以 `O_NONBLOCK` 開啟 FIFO 或裝置檔不會阻塞 | POSIX `open`：以 `O_RDONLY \| O_NONBLOCK` 開啟 FIFO 立即返回；支援非阻塞開啟的裝置檔也立即返回 | 只在判定類型與開檔之間被換成特殊檔案時才會遇到；開啟後以 handle 判定類型，不是一般檔案就不讀取（§6.3）。pilot 沒有測試裝置檔 | 通過。Linux 與 macOS 以 `O_NOFOLLOW \| O_NONBLOCK` 開啟 FIFO 都立即返回，以 handle 判定為其他類型。對照組：不加 `O_NONBLOCK` 時開啟會阻塞 |
 
-### 7.8 文件出處
+### 7.8 初始化的 git clone
+
+§4.16 的 clone 依賴下列 git 的行為，由 pilot P7 驗證（CI run 42932273514，§7.1）。測試以本機的 file:// repo 執行，不需要網路；替換由另一個 pilot 程序在 clone 開始前執行。
+
+| 編號 | 假設 | 依據 | 保證範圍與條件 | pilot 結果 |
+| --- | --- | --- | --- | --- |
+| ASM-22 | 以 `git clone -- <url> .` clone 到工作目錄時，git 寫入工作目錄的實際位置。Linux 與 macOS 以 `fchdir` 進入持有的目錄後，路徑上的目錄被換成連結或其他目錄，不會改變 git 的寫入位置 | git-clone 文件只說明 `<directory>` 是 clone 的目的地，沒有說明如何解析，也沒有說明 clone 期間是否以絕對路徑操作 | 文件沒有保證，依 pilot 的結果。clone 開始後，git 以絕對路徑寫入：clone 進行中路徑上的目錄被換成連結時，之後的寫入可能經由連結落在 home 外；暫存目錄或上層在最後一次核對後被整個搬出 home 時，寫入跟著目錄到 home 外（同 ASM-06）。兩者都由 clone 後的核對發現（§6.3）。本機實驗中，clone 進行中替換上層時，git 因找不到自己的 `.git/config` 而失敗，home 外沒有檔案，但這只是單次觀察，不當作保證。Windows 依 ASM-08 持有每一層，沒有這些情況。pilot 只用 file:// repo，HTTPS 與 SSH 由 06 驗證 | 有條件。git 2.56.0（Windows 為 2.56.0.windows.4）。clone 開始前替換父目錄或上一層：Linux 與 macOS 的換成連結、換成 home 內的其他目錄共 4 個案例，clone 都在持有的目錄，home 外與替代目錄都沒有改變；整個搬出 home 的 2 個案例，clone 寫入搬出去的目錄。6 個案例在 clone 後重新走訪都發現路徑改變。兩個 Windows job 中，6 種替換都被擋下（sharing violation），clone 照常完成。對照組：以路徑交給 git 時，Linux 與 macOS 換成連結的 2 個案例，整個 clone 寫到 home 外 |
+
+### 7.9 文件出處
 
 - POSIX.1-2024：[`rename`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/rename.html)、[`link`／`linkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/link.html)、[`open`／`openat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/open.html)、[`unlink`／`unlinkat`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/unlink.html)、[`<sys/stat.h>`](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_stat.h.html)
 - Linux：[`rename(2)`](https://man7.org/linux/man-pages/man2/rename.2.html)、[`flock(2)`](https://man7.org/linux/man-pages/man2/flock.2.html)
 - macOS：[`fsync(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fsync.2.html)、[`flock(2)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html)、[`rename(2)`（xnu 原始碼）](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/rename.2)、[QA1118 Statically linked binaries on Mac OS X](https://developer.apple.com/library/archive/qa/qa1118/_index.html)
 - Windows：[`MoveFileExW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[`CreateFileW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[`GetFinalPathNameByHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)、[`FILE_ID_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[`BY_HANDLE_FILE_INFORMATION`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information)、[`FILE_DISPOSITION_INFO`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info)、[`FILE_LINK_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_link_information)、[`FILE_RENAME_INFORMATION`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)、[`CreateSymbolicLinkW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw)、[Create symbolic links 使用者權限](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/create-symbolic-links)、[`CreateDirectoryW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw)、[`GetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo)、[`SetSecurityInfo`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo)
+- git：[`git-clone`](https://git-scm.com/docs/git-clone)
 - Rust：[`std::env::home_dir`](https://doc.rust-lang.org/std/env/fn.home_dir.html)
 
 ## 8. 可測試性設計
@@ -2699,6 +2718,9 @@ core 的單元測試不能使用 testkit。testkit 依賴 core；core 的單元�
 
 | 情境 | 04 §5 的時間點 | 同步點 | 預期 |
 | --- | --- | --- | --- |
+| A7 | clone 前，暫存目錄的上層被換成指向 home 外的連結 | `BeforeOperation`（`SourceClone`） | Windows 擋下替換，clone 照常完成；Linux 與 macOS 的 clone 寫入持有的暫存目錄，home 外與替代位置都沒有檔案，`recheck` 發現路徑改變，回報 `init.stale`（ASM-22） |
+| A7 | clone 前，暫存目錄的上層被整個搬到 home 外 | `BeforeOperation`（`SourceClone`） | Windows 擋下；Linux 與 macOS 的 clone 寫入搬出去的目錄，`recheck` 發現，回報 `init.stale`，不刪除 home 外的檔案（SRS DC-002） |
+| A7 | 下載成功後、移入前，父目錄被換成指向 home 外的連結 | `BeforeOperation`（`SourceMoveIn`） | 同 A10 的第二列，回報 `init.stale`，不建立本機設定 |
 | A7 | 本機設定寫入失敗、撤回來源目錄之前，其他程式在來源目錄新增或修改檔案 | `FaultFs` 使本機設定的寫入失敗，再於 `BeforeOperation`（`SourceWithdraw`）改動 | 清單不同，來源目錄移回正式位置，回報 `init.rollback-kept`，改動保留 |
 | A7 | 撤回的清單比較通過後、刪除前 | `BeforeOperation`（`SourceRemove`）新增檔案或替換既有檔案 | 新增與替換的項目及其上層目錄保留，其他刪除，回報 `init.rollback-kept` |
 | A10 | 預檢剛通過 | `AfterPreflight` | 走訪時父目錄的身分不符，不執行操作 |
@@ -2734,7 +2756,7 @@ core 的單元測試不能使用 testkit。testkit 依賴 core；core 的單元�
 | A26 | 最後一次目標重檢後，批次完成前（須寫入新狀態） | `BeforeCommit` 或 `BeforeCompletion` | 完成確認發現不符，回復原狀態 |
 | A26 | 同上（全批免寫狀態） | `BeforeCompletion` | 完成確認發現不符 |
 
-不依同步點的情境：A5 停止管理的兩次寫入之間以 `FaultFs` 注入失敗，程序中止則以執行檔的測試終止；A5 最後一個情境在 `AfterPreflight` 執行停止管理，依 §6.7 會因取不到鎖定而失敗。A7、A12 用 `BeforeOperation`（來源目錄的移入、來源副本的建立、manifest 與本機設定的修改）；A7 的「下載途中才被占用」由假的 `GitClient` 在 clone 期間建立檔案。A24 在 `AfterPreflight` 與第一個項目的 `AfterOperation` 替換來源，預期是寫入的內容仍是預檢時的版本，執行期間沒有開啟來源檔。執行期參照是規劃時放進記憶體的 `DesiredContent`（§4.12），執行時不需要再取得，所以「無法取得已確認的內容」只剩寫入途中損毀一種情況，以 `FaultFs` 注入（§8.3），預期 `Executor` 發現寫入的版本不符，依執行失敗整批回復，不提交狀態。A6、A13 的程序中止與 A8 見 §8.3。
+不依同步點的情境：A5 停止管理的兩次寫入之間以 `FaultFs` 注入失敗，程序中止則以執行檔的測試終止；A5 最後一個情境在 `AfterPreflight` 執行停止管理，依 §6.7 會因取不到鎖定而失敗。A7、A12 用 `BeforeOperation`（來源目錄的移入、來源副本的建立、manifest 與本機設定的修改）；A7 的「下載途中才被占用」由假的 `GitClient` 在 clone 期間建立檔案；表中 clone 前替換的兩列使用真的 git 與本機的 repo（同 pilot P7），假的 `GitClient` 無法驗證 git 的寫入位置。A24 在 `AfterPreflight` 與第一個項目的 `AfterOperation` 替換來源，預期是寫入的內容仍是預檢時的版本，執行期間沒有開啟來源檔。執行期參照是規劃時放進記憶體的 `DesiredContent`（§4.12），執行時不需要再取得，所以「無法取得已確認的內容」只剩寫入途中損毀一種情況，以 `FaultFs` 注入（§8.3），預期 `Executor` 發現寫入的版本不符，依執行失敗整批回復，不提交狀態。A6、A13 的程序中止與 A8 見 §8.3。
 
 A16 第三列的預期依 §6.5 的快照方式而定：快照是邊讀邊計算的複製，核對的是讀到的位元組，所以「改回」不會讓錯誤的副本通過。若改用 hard link 當快照，副本就是原檔本身，改回之後副本是正確的版本，這一列的預期就不成立；這是 §6.5 不用 hard link 當快照的另一個理由。
 
@@ -3246,23 +3268,24 @@ FR-DRF-012 與 B-6 清除的是「已經沒有輸出管理的舊目標」。同�
 
 ### 12.3 與 SRS 文字的落差
 
-下列三項不是做不到，而是 SRS 的文字與設計之間有落差。第一版不修訂這些需求，以下說明 05 的解讀與限制，請審查時確認。
+下列三項不是做不到，而是 SRS 的文字與設計之間有落差。DC-002 依審查在 SRS 寫明適用範圍（SRS 1.3 版），USE-002 在 SRS A.3 補註驗收方式（SRS 1.2 版），FR-PLN-006 不修訂 SRS。以下說明 05 的對應與解讀。
 
-**DC-002 與平台的保護範圍**：04 §3.3 末段要求，平台無法提供所需的保護時，由團隊確認支援條件、失敗行為，以及是否修訂 SRS。05 有兩處平台無法再收緊：
+**DC-002 與平台的保護範圍**：04 §3.3 末段要求，平台無法提供所需的保護時，由團隊確認支援條件、失敗行為，以及是否修訂 SRS。05 有三處平台無法再收緊：
 
 - ASM-06：Linux 與 macOS 上，持有目錄 fd 不能阻止其他程序搬移該目錄。外部程序在最後一次檢查後把原目錄整個搬到 home 外時，本批的寫入會短暫出現在搬出去的目錄中，§6.3 的步驟 4 發現後經由同一個 fd 復原。寫入不會落在替代的目錄或連結指向的位置。Windows 由 ASM-08 擋下搬移，沒有這個情況。
-- §6.3 的「剩下的空窗」：Windows 的取代，以及 Linux、macOS 不支援交換式改名的檔案系統，在最後一次核對與實際取代之間有一次系統呼叫的空窗，空窗內的替換或修改會被取代掉。
+- 初始化的 git clone（ASM-22）：Linux 與 macOS 上，最後一次核對後暫存目錄或上層被搬到 home 外，或 clone 進行中路徑上的目錄被換成連結時，git 寫入的檔案可能在 home 外。clone 後的核對發現，回報失敗，不刪除可能在 home 外的檔案（§4.16、§6.3）。clone 開始前的連結替換不受影響（pilot P7）。Windows 依 ASM-08 持有每一層，沒有這個情況。
+- §6.3 的「剩下的空窗」：Windows 的取代，以及 Linux、macOS 不支援交換式改名的檔案系統，在最後一次核對與實際取代之間有一次系統呼叫的空窗，空窗內的替換或修改會被取代掉。這不改變寫入位置。
 
-DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）沒有外部程序介入，仍可通過。05 的解讀是：DC-002 約束 rosamta 選擇的寫入位置；外部程序在操作期間搬移目錄時，rosamta 發現後復原，不把寫入留在 home 外。若團隊認為短暫出現也違反 DC-002，須修訂 SRS，或把 Linux 與 macOS 的保證範圍寫進 SRS 的假設。
+DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）沒有外部程序介入，仍可通過。前兩處是 DC-002 在其他程式搬移或替換目錄時的行為，SRS 3.5 節的適用範圍與上述一致；06 依該節與 §8.5 的 A7、A10 設計測試情境。
 
-**USE-002 的驗收條件**：需求本文成立：第一版沒有啟用互動的選項（§9.2），rosamta 永遠不進入互動模式，也就不會因標準輸入沒有連接終端機而失敗。驗收條件的第一步「啟用互動」卻無法執行。06 去掉這一步執行其餘部分：把標準輸入導向 `/dev/null`（Windows 為 `NUL`）後套用，有一個 drift 衝突，確認該項目被略過、其他項目照常套用、exit code 為 2；並以 USE-001 的測試確認沒有任何子指令詢問。是否在 SRS 補註這個驗收條件，與 A.3 一起決定。
+**USE-002 的驗收條件**：需求本文成立：第一版沒有啟用互動的選項（§9.2），rosamta 永遠不進入互動模式，也就不會因標準輸入沒有連接終端機而失敗。驗收條件的第一步「啟用互動」卻無法執行。06 去掉這一步執行其餘部分：把標準輸入導向 `/dev/null`（Windows 為 `NUL`）後套用，有一個 drift 衝突，確認該項目被略過、其他項目照常套用、exit code 為 2；並以 USE-001 的測試確認沒有任何子指令詢問。SRS A.3 已補註這個驗收方式。
 
 **FR-PLN-006 的前提**：需求的前提是「來源目錄、本機設定與目標路徑都沒有改變」，但計畫還依賴狀態檔、主機資訊（作業系統、主機名稱、環境變數、home）與本次的選項（§4.12 的 `PlanInput`）。預覽與套用執行相同的第 1–7 步、使用同一個 `Planner`（§4.15），選項轉成同一個 `Choices`（§9.2），所以這些輸入都沒有改變時，套用的項目與動作和預覽相同。驗收條件是「預覽後立即套用」，期間沒有任何輸入改變；05 把前提解讀成「計畫的所有輸入都沒有改變」，06 的驗收以相同的選項執行兩次。04 A2 在預覽後移除狀態檔、預期套用保留舊檔，本身就是狀態檔改變使計畫不同的例子。
 
 **其他**：
 
 - IF-001：編輯來源（FR-MAN-027）延後，沒有對應的子指令（§9.1）。IF-001 的驗收只涵蓋「第一版提供的每項操作」，03 §11 也說明只有交付範圍內的功能才需要子指令，所以這不是落差。
-- SRS A.3：§1.2 延後的 10 條 `conditional` 與 2 條 `optional` 需求，依 A.3 的規定記錄在 A.3 與修訂紀錄。這部分另開 PR 修訂 SRS，並在本文件之前合併。
+- SRS A.3：§1.2 延後的 10 條 `conditional` 與 2 條 `optional` 需求，依 A.3 的規定記錄在 A.3 與修訂紀錄（SRS 1.2 版）。
 
 ### 12.4 與 03、04 不同的設計
 
@@ -3430,7 +3453,7 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 | DATA-005 | 設定目錄與狀態目錄在來源目錄以外；輸出不得寫入保留位置 | §4.6、§5.1、§5.2、§5.8 |
 | DATA-006 | 狀態檔的紀錄 | §5.10 |
 | DC-001 | 不建立符號連結；程式目錄都在 home 內 | §5.1、§7.4 |
-| DC-002 | 程式目錄與目標都在 home 內；操作綁定與重檢；Unix 的限制見 §12.3 | §4.6、§5.1、§6.1、§6.3、§12.3 |
+| DC-002 | 程式目錄與目標都在 home 內；操作綁定與重檢；git clone 在持有的暫存目錄執行；Unix 的限制見 §12.3 | §4.6、§4.16、§5.1、§6.1、§6.3、§12.3 |
 | DC-003 | 輸出以一般檔案的暫存檔寫入；接管與回復不建立連結 | §6.4、§6.5、§7.4 |
 | DC-004 | 靜態連結的執行檔，內建資源編進執行檔 | §2.1、§4.2、§7.5 |
 
@@ -3471,6 +3494,7 @@ DC-002 的驗收（記錄初始化並套用時建立與修改的所有檔案）�
 | ASM-19 | A13：Windows 上程式目錄的存取限制 | 原檔的 DACL 有明確的項目或不繼承上層時，取代後保有原本的 DACL（FR-MAN-016、§6.4） |
 | ASM-20 | A5 最後一個情境：套用持有鎖定時停止管理 | 兩個會寫入的子指令同時執行，後者立即失敗（§6.7） |
 | ASM-21 | A18：無寫入端的 FIFO | 裝置檔（§7.7） |
+| ASM-22 | A7：clone 前替換暫存目錄的上層（§8.5） | clone 進行中替換路徑上的目錄；HTTPS 與 SSH 的遠端（§7.8） |
 
 ### 13.3 交給 06 的事項
 

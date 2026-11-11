@@ -466,6 +466,7 @@ classDiagram
         +list_dir(at) Result~DirEntry[]~
         +location_key(at) Result~LocationKey~
         +list_tree(at) Result~TreeListing~
+        +hold_dir(lock, expect) Result~HeldDir~
         +prepare_read(at) Result~Prepared~
         +read_file(at) Result~bytes, Observation~
         +ensure_private_dir(at) Result
@@ -501,6 +502,12 @@ classDiagram
         +written Option~Version~
         +captured Option~CaptureInfo~
         +kept Vec~String~
+    }
+    class HeldDir {
+        <<interface>>
+        +at() HomePath
+        +work_dir() WorkDir
+        +recheck() Result
     }
     class TreeListing {
         +root Observation
@@ -581,6 +588,7 @@ classDiagram
     FileSystem ..> Observation : 產生
     FileSystem ..> LocationKey : 產生
     FileSystem ..> TreeListing : 產生
+    FileSystem ..> HeldDir : 產生
     FsOp ..> TreeListing : RemoveTree 依清單刪除
     FileSystem ..> FsError : 失敗時
     FileSystem ..> WriteLock : 寫入時要求
@@ -757,7 +765,7 @@ classDiagram
     }
     class GitClient {
         <<interface>>
-        +clone_into(url, dest) Result
+        +clone_into(url, dest HeldDir) Result
     }
     class ApplyService
     class ConfigLoader
