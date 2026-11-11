@@ -16,7 +16,7 @@
 | 1.3 | 2026-11-11 | ShawnChiu | 送審版本：依詳細設計的 review，在 3.5 節說明其他程式在 rosamta 執行期間搬移或替換 home 內的目錄時，DC-002 的適用範圍 |
 | 1.4 | 2026-11-11 | ShawnChiu | 送審版本：依詳細設計的 review，在 3.5 節說明初始化時路徑在 rosamta 檢查之前被還原的情況，rosamta 無法發現 |
 | 1.5 | 2026-11-11 | ShawnChiu | 送審版本：依測試計畫在 A.4 列出第一版 140 條需求各自對應的測試案例編號 |
-| 1.6 | 2026-11-11 | Codex（草擬） | 文件對齊草案：補足重複名稱的驗收、套用的完成確認及與設計文件的對照；首版範圍與需求編號不變 |
+| 1.6 | 2026-11-11 | Codex（草擬） | 文件對齊草案：補足重複名稱的驗收與套用的完成確認，將測試案例對照移至測試計畫；首版範圍與需求編號不變 |
 
 ## 目錄
 
@@ -167,7 +167,7 @@ rosamta 第一版提供以下功能，摘要見 2.2 節，正式需求見 3.2 �
 | --- | --- |
 | 第 2 節 整體描述 | rosamta 與周邊環境的關係、主要功能、使用者、限制與假設，以及需求分期。本節提供背景，不含正式需求 |
 | 第 3 節 具體需求 | 外部介面、功能需求（依功能特性分成九組）、效能、邏輯資料、設計限制與軟體系統屬性。設計與測試以本節為準 |
-| 附錄 A 需求追溯矩陣 | 本文件的需求編號，與研究候選編號、測試案例的對應 |
+| 附錄 A 需求追溯矩陣 | 研究候選需求與正式需求的對應，以及首版延後的需求 |
 | 附錄 B 決策紀錄 | 研究文件之間的衝突如何定案，以及尚未決定的事項 |
 
 第 3 節的每條需求包含以下欄位：
@@ -966,7 +966,7 @@ rosamta 不加密機密（B-9），保護來源目錄是使用者的責任（AS-
 
 ## 附錄 A：需求追溯矩陣
 
-本附錄從兩個方向追溯第 3 節的需求：往回對應研究階段的候選需求（A.1、A.2），往前對應測試案例（A.4）。A.3 記錄第一版延後的需求。
+本附錄列出第 3 節需求的來源（A.1、A.2），並記錄首版延後的需求（A.3）。
 
 ### A.1 研究候選需求的去向
 
@@ -1110,155 +1110,6 @@ dotbot 研究沒有編號的候選需求，下表依研究結尾「對本組專�
 | FR-MAN-027 | conditional | 使用者可用 FR-QRY-003 查到範本或來源檔的路徑，再自行開啟 |
 
 延後互動模式後，第一版沒有啟用互動的方式，USE-002 的需求本文仍然成立：rosamta 永遠不會進入互動模式。USE-002 的驗收條件以啟用互動為前提，第一版改以 USE-001 的驗收確認沒有任何子指令進入互動模式；之後的版本提供互動模式時，再依原本的驗收條件測試。
-
-### A.4 測試案例
-
-下表依第 3 節的需求編號與驗收條件列出對應案例。首版 140 條需求各有至少一個測試案例。A.3 延後的 12 條需求在納入後再補案例。
-
-案例編號的字首對應測試計畫的章節：`CLI`、`CFG`、`TPL`、`MAN`、`QRY`、`PLN`、`APL`、`DRF`、`INI`、`STA` 為功能測試（§3），`REL`、`MNT`、`DIST`、`PERF` 為品質與發佈測試（§4），`A1`–`A26` 為設計分析的驗證情境（§5），`PLAT` 為平台假設的補充驗收（§6）。
-
-| 需求 | 測試案例 |
-| --- | --- |
-| IF-001 | CLI-01 |
-| IF-002 | CLI-01 |
-| IF-003 | PLN-02 |
-| IF-004 | CLI-03 |
-| IF-005 | CFG-02 |
-| IF-006 | CFG-02 |
-| IF-007 | CLI-02、APL-02、A12 |
-| IF-008 | CLI-02、CLI-03 |
-| IF-009 | CLI-02 |
-| IF-010 | CFG-01 |
-| IF-011 | CFG-05 |
-| IF-012 | INI-01、A7、PLAT-07 |
-| IF-013 | CLI-04 |
-| FR-MOD-001 | CFG-04 |
-| FR-MOD-002 | TPL-01、A4 |
-| FR-MOD-003 | CFG-03 |
-| FR-MOD-004 | CFG-04 |
-| FR-TPL-001 | CFG-03 |
-| FR-TPL-002 | CFG-03 |
-| FR-TPL-003 | TPL-01、A9 |
-| FR-TPL-004 | TPL-02 |
-| FR-TPL-005 | TPL-02 |
-| FR-TPL-006 | TPL-01、A9 |
-| FR-TPL-007 | TPL-02 |
-| FR-TPL-008 | TPL-02 |
-| FR-MAN-001 | TPL-01 |
-| FR-MAN-002 | TPL-01 |
-| FR-MAN-003 | TPL-01 |
-| FR-MAN-004 | CFG-01 |
-| FR-MAN-005 | MAN-01、A9、A24 |
-| FR-MAN-006 | MAN-01 |
-| FR-MAN-007 | MAN-01 |
-| FR-MAN-008 | MAN-01 |
-| FR-MAN-009 | MAN-01 |
-| FR-MAN-010 | MAN-01 |
-| FR-MAN-011 | MAN-01 |
-| FR-MAN-012 | MAN-03 |
-| FR-MAN-013 | MAN-03 |
-| FR-MAN-015 | MAN-03、A14 |
-| FR-MAN-016 | MAN-03、A6、PLAT-05 |
-| FR-MAN-018 | APL-01 |
-| FR-MAN-019 | APL-01、REL-03、A3、A16、A18 |
-| FR-MAN-020 | APL-01、A3、A18 |
-| FR-MAN-021 | APL-01、A3、A14 |
-| FR-MAN-023 | MAN-02、A12 |
-| FR-MAN-024 | MAN-02 |
-| FR-MAN-025 | MAN-02、MAN-04、A5、PLAT-06 |
-| FR-MAN-026 | QRY-01、A1 |
-| FR-MAN-028 | CFG-01 |
-| FR-MAN-029 | CFG-01 |
-| FR-MAN-030 | MAN-02、INI-02 |
-| FR-PRF-001 | CFG-05 |
-| FR-PRF-002 | CFG-05 |
-| FR-PRF-003 | CFG-05 |
-| FR-PRF-004 | CFG-05 |
-| FR-PRF-005 | CFG-05 |
-| FR-PRF-006 | CFG-05 |
-| FR-PRF-007 | CFG-05 |
-| FR-PRF-008 | CFG-05 |
-| FR-PRF-009 | CFG-05、A1 |
-| FR-PRF-010 | CFG-05、A1 |
-| FR-PRF-011 | CFG-05、A1 |
-| FR-PRF-012 | CFG-05、A1 |
-| FR-PRF-013 | CFG-05、A1 |
-| FR-PLN-001 | PLN-01 |
-| FR-PLN-002 | PLN-01、PERF-01、A4 |
-| FR-PLN-003 | PLN-01、PLN-02、A9 |
-| FR-PLN-004 | PLN-01、A2、PLAT-06 |
-| FR-PLN-005 | TPL-02 |
-| FR-PLN-006 | PLN-01、A2、A24 |
-| FR-PLN-007 | CFG-06、A2、A9、A11、A18、A24 |
-| FR-PLN-008 | CFG-04、CFG-05、CFG-06、A1 |
-| FR-PLN-009 | CFG-06、A2 |
-| FR-PLN-010 | CFG-06、A2 |
-| FR-APL-001 | PLN-01、APL-01、A11、A14、A15、A17、A19、A20、A22、A23、A24、A25、A26 |
-| FR-APL-002 | REL-01、REL-03、A6、A8、A10、A14、A15、A16、A17、A18、A19、A20、A21、A22、A23、A24、A25、A26、PLAT-04 |
-| FR-APL-003 | CLI-03、REL-01、REL-03、A6、A8、A10、A16、A17、A18、A19、A20、A21、A22、A23、A24、A25、A26、PLAT-04 |
-| FR-APL-004 | CLI-03、REL-01、REL-03、A6、A8、A10、A16、A17、A18、A19、A20、A21、A22、A23、A24、A25、A26、PLAT-04 |
-| FR-APL-005 | CLI-03、APL-01、APL-02、A11 |
-| FR-APL-006 | APL-02、A17、A26 |
-| FR-APL-007 | APL-02、DRF-01、A4、A11、A18 |
-| FR-APL-008 | APL-02、DRF-01、REL-01、A4、A6、A10、A11、A14、A15、A16、A17、A18、A19、A20、A21、A22、A23、A24、A25、A26 |
-| FR-APL-009 | MAN-04、APL-01、DRF-01、DRF-03、A11 |
-| FR-DRF-001 | APL-01、DRF-01、A4 |
-| FR-DRF-002 | DRF-01、DRF-02、A4、A14 |
-| FR-DRF-003 | APL-02、DRF-01 |
-| FR-DRF-004 | DRF-01 |
-| FR-DRF-005 | DRF-01、A4 |
-| FR-DRF-006 | DRF-01、DRF-02、REL-04、A4、A13、A14 |
-| FR-DRF-007 | DRF-02、A4 |
-| FR-DRF-008 | DRF-02、A4 |
-| FR-DRF-009 | APL-02、DRF-01、A4 |
-| FR-DRF-012 | APL-01、DRF-03、A5、A18、A19、A22 |
-| FR-DRF-013 | DRF-03、A5、A18、A19 |
-| FR-DRF-014 | DRF-03、A5 |
-| FR-DRF-015 | DRF-03、A5、A14、A15 |
-| FR-DRF-016 | MAN-04、DRF-03、A5 |
-| FR-QRY-001 | QRY-01、A1 |
-| FR-QRY-002 | QRY-01、A1 |
-| FR-QRY-003 | QRY-01、A9 |
-| FR-QRY-004 | QRY-01、A1、A9 |
-| FR-QRY-005 | QRY-02 |
-| FR-QRY-006 | QRY-01、QRY-02、PLAT-06 |
-| FR-INI-001 | INI-01、A7 |
-| FR-INI-002 | INI-01、A7 |
-| FR-INI-003 | INI-01 |
-| FR-INI-004 | INI-01 |
-| FR-INI-005 | INI-01 |
-| FR-INI-006 | INI-02、PLAT-07 |
-| FR-INI-008 | INI-02 |
-| FR-INI-009 | INI-03、A7、PLAT-04、PLAT-07 |
-| FR-INI-010 | INI-03、A7、PLAT-07 |
-| FR-INI-011 | CLI-03、INI-03、A7 |
-| PERF-001 | PERF-01、A8 |
-| DATA-001 | CFG-04 |
-| DATA-002 | CFG-03 |
-| DATA-003 | CFG-03 |
-| DATA-004 | CFG-03 |
-| DATA-005 | STA-01、A11 |
-| DATA-006 | APL-01、DRF-02、STA-01、PLAT-02 |
-| DC-001 | DIST-01、PLAT-03 |
-| DC-002 | MAN-01、DIST-01、A7、A10、A12、A16、A20、PLAT-01、PLAT-04、PLAT-07 |
-| DC-003 | REL-03、DIST-01、DIST-02、A3、A18、PLAT-01、PLAT-03、PLAT-04 |
-| DC-004 | DIST-01、PLAT-02 |
-| REL-001 | REL-02、A6、A8、PLAT-01 |
-| REL-002 | REL-01、REL-02、A6、A8、A20、A23、A25、PLAT-01 |
-| REL-003 | STA-01、A2、A3 |
-| REL-004 | STA-01、A20、A23、A25 |
-| USE-001 | CLI-04、INI-02、PLAT-05、PLAT-06、PLAT-07 |
-| USE-002 | CLI-04 |
-| USE-003 | TPL-02、A9 |
-| USE-004 | CFG-06 |
-| SEC-001 | REL-04、A13 |
-| SEC-002 | REL-03、A3、A5、A6、A10、A16、A20、PLAT-01、PLAT-03 |
-| SEC-003 | REL-03、REL-04、A13、PLAT-05 |
-| MNT-001 | MNT-01 |
-| MNT-002 | MNT-01 |
-| MNT-003 | MNT-01 |
-| PORT-001 | DIST-01、PLAT-02 |
-| PORT-002 | DIST-02 |
 
 ## 附錄 B：決策紀錄
 
