@@ -107,6 +107,20 @@ pub fn execute(
     let (batch, dir) = unique_directory(fs, &layout.state.join("txn")?, batch)?;
     report.batch = batch;
     let mut journal = Journal::new(fs, dir);
+    if let Err(error) = journal.index(
+        plan.items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.writes_target())
+            .map(|(index, item)| (index, &item.target)),
+    ) {
+        return match journal.finish() {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(format!(
+                "{error}; could not clean the transaction: {cleanup}"
+            )),
+        };
+    }
     let mut records = state.records.clone();
     let mut check_after = Vec::new();
 

@@ -9,7 +9,7 @@ use std::io;
 pub struct Journal<'a> {
     fs: &'a dyn FileSystem,
     dir: HomePath,
-    snapshots: Vec<HomePath>,
+    snapshots: Vec<(HomePath, Entry)>,
     changes: Vec<Change>,
 }
 
@@ -39,17 +39,29 @@ impl<'a> Journal<'a> {
 
     pub fn save(&mut self, index: usize, entry: &Entry) -> Result<(), String> {
         let path = self.dir.join(&format!("before-{index}"))?;
-        self.fs
-            .change(
-                &path,
-                None,
-                Some(Replacement {
-                    bytes: &entry.bytes,
-                    mode: entry.mode,
-                }),
-            )
-            .map_err(|error| format!("{path}: {error}"))?;
-        self.snapshots.push(path);
+        self.save_file(path, &entry.bytes, entry.mode)
+    }
+
+    pub fn index<'p>(
+        &mut self,
+        targets: impl Iterator<Item = (usize, &'p HomePath)>,
+    ) -> Result<(), String> {
+        let targets: Vec<_> = targets
+            .map(|(index, path)| serde_json::json!({"index": index, "target": path.as_str()}))
+            .collect();
+        let bytes =
+            serde_json::to_vec_pretty(&serde_json::json!({"version": 1, "targets": targets}))
+                .map_err(|error| error.to_string())?;
+        self.save_file(self.dir.join("targets.json")?, &bytes, Some(0o600))
+    }
+
+    fn save_file(&mut self, path: HomePath, bytes: &[u8], mode: Option<u32>) -> Result<(), String> {
+        let saved = self
+            .fs
+            .change(&path, None, Some(Replacement { bytes, mode }))
+            .map_err(|error| format!("{path}: {error}"))?
+            .ok_or_else(|| format!("{path}: snapshot was not created"))?;
+        self.snapshots.push((path, saved));
         Ok(())
     }
 
@@ -102,16 +114,10 @@ impl<'a> Journal<'a> {
     }
 
     pub fn finish(self) -> Result<(), String> {
-        for path in self.snapshots {
-            if let Some(entry) = self
-                .fs
-                .inspect(&path)
-                .map_err(|error| format!("{path}: {error}"))?
-            {
-                self.fs
-                    .change(&path, Some(&entry), None)
-                    .map_err(|error| format!("{path}: {error}"))?;
-            }
+        for (path, snapshot) in self.snapshots.into_iter().rev() {
+            self.fs
+                .change(&path, Some(&snapshot), None)
+                .map_err(|error| format!("{path}: {error}"))?;
         }
         self.fs
             .remove_empty_directory(&self.dir)

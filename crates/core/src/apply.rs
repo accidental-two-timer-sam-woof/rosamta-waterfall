@@ -41,15 +41,7 @@ pub(crate) fn execute_locked(
     choices: &Choices,
     batch: &str,
 ) -> Deployment {
-    let mut analysis = analyze(fs, host, choices)?;
-    if let Ok(path) = analysis.layout.state.join("txn")
-        && let Ok(entries) = fs.children(&path)
-        && !entries.is_empty()
-    {
-        analysis.plan.warnings.push(format!(
-            "{path}: previous transaction snapshots remain; inspect them before removal"
-        ));
-    }
+    let analysis = analyze(fs, host, choices)?;
     let report = crate::exec::execute(
         fs,
         host.platform,
@@ -82,6 +74,14 @@ pub fn analyze(
     for output in config.enabled(host).1 {
         plan.warnings.push(format!(
             "profile enables unknown or removed output {output}"
+        ));
+    }
+    if let Ok(path) = config.layout.state.join("txn")
+        && let Ok(entries) = fs.children(&path)
+        && !entries.is_empty()
+    {
+        plan.warnings.push(format!(
+            "{path}: previous transaction snapshots remain; inspect them before removal"
         ));
     }
     Ok(Analysis {
