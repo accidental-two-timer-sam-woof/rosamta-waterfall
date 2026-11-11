@@ -1157,6 +1157,18 @@ pub enum Content { Keep, Discard } // 一般檔案的內容是否保留在結果
 
 pub struct DirEntry { pub name: String, pub kind: EntryKind }
 
+/// 目錄樹的清單（§4.16 撤回來源目錄）：根目錄之下的每個項目，不跟隨連結。
+pub struct TreeListing { pub root: Observation, pub entries: BTreeMap<String, TreeEntry> } // 以 / 分隔的相對路徑為鍵
+pub struct TreeEntry {
+    pub kind: EntryKind, pub id: FileId, pub size: u64,
+    pub modified: SystemTime,   // 修改時間
+    pub changed: SystemTime,    // 狀態變更時間：Linux、macOS 的 st_ctime，Windows 的 ChangeTime
+}
+impl TreeListing {
+    /// 兩份清單中不同的相對路徑：只出現在一邊，或類型、身分、大小、兩個時間任一項不同。
+    pub fn differences(&self, other: &TreeListing) -> Vec<String>;
+}
+
 /// 管理與初始化回報的檔案變更（§4.8、§4.16）。
 pub struct FileChange { pub at: HomePath, pub kind: ChangeKind }
 pub enum ChangeKind { Created, Modified, Removed }
@@ -1185,6 +1197,8 @@ pub trait FileSystem {
     fn list_dir(&self, at: &HomePath) -> Result<Vec<DirEntry>, FsError>;
     fn location_key(&self, at: &HomePath) -> Result<LocationKey, FsError>;
     fn case_sensitive(&self, dir: &HomePath) -> Result<bool, FsError>;
+    /// 走訪 at 之下的整個目錄樹。走訪經由從 home 起持有的 handle，結束時依 §6.3 步驟 4 確認路徑仍通往 at。
+    fn list_tree(&self, at: &HomePath) -> Result<TreeListing, FsError>;
     /// 讀取一般檔案的綁定版本：prepare 走訪並核對類型，execute 經由持有的 handle 開檔讀取，
     /// confirm 重新走訪（§6.3）。其他類型以 FsErrorKind::NotRegular 失敗。
     fn prepare_read<'a>(&'a self, at: &HomePath) -> Result<Box<dyn Prepared + 'a>, FsError>;
@@ -1230,7 +1244,7 @@ pub enum FsOp<'a> {
     Backup       { expect: &'a Observation, into: &'a HomePath }, // hard link，不行時複製；連結只能 hard link
     RestoreLink  { backup: &'a Observation, expect: &'a Observation }, // 把連結的備份改名回目標，取代 expect
     MoveDir      { expect: &'a Observation, to: &'a Observation }, // 不覆蓋的改名（§6.3 初始化）
-    RemoveTree   { expect: &'a Observation },                  // 只用於初始化的暫存目錄
+    RemoveTree   { expect: &'a Observation, listing: &'a TreeListing }, // 只用於初始化的暫存目錄；只刪除清單中、身分相符的項目
 }
 
 pub enum Source<'a> {
@@ -1250,6 +1264,7 @@ pub struct OpOutcome {
     pub written: Option<Version>,          // 建立與取代：實際寫入的內容，邊寫邊計算
     pub captured: Option<CaptureInfo>,     // 擷取快照與製作備份
     pub content: Option<Vec<u8>>,          // prepare_read 讀到的內容
+    pub kept: Vec<String>,                 // RemoveTree 沒有刪除的項目（相對路徑）
 }
 pub struct CaptureInfo { pub copy: Observation, pub sha256: Sha256, pub security: SecurityInfo, pub linked: bool }
 pub struct SecurityInfo { /* Linux 與 macOS 的權限位元，或 Windows 的 DACL */ }
@@ -1265,6 +1280,7 @@ pub struct SecurityInfo { /* Linux 與 macOS 的權限位元，或 Windows 的 D
 - `inspect` 不開啟非一般檔案（04 §3.1、A18）；一般檔案以 `O_NOFOLLOW | O_NONBLOCK` 開啟後，以 handle 核對類型再讀取（ASM-21）。`Content::Discard` 時只計算 SHA-256。
 - `prepare` 的核對不符時回傳 `Stale`，不執行任何系統呼叫。`execute` 失敗時，平台已撤回的部分不留下效果，例如交換後發現版本不符而換回原位；`FsError::applied` 說明操作是否已生效。
 - `confirm` 發現路徑不再通往持有的目錄時，經由 handle 復原，回傳 `Stale` 並標明已復原（ASM-06）。發現目標不是預期的結果時，不再動它。
+- `RemoveTree` 由深到淺刪除，每個項目刪除前經由持有的上層 handle 核對類型與身分仍是 `listing` 中的。不符或清單以外的項目不刪除，它的上層目錄因此不是空的，也保留下來，相對路徑列在 `kept`。
 - `written` 由實作在寫入暫存檔時計算，是實際寫入檔案的位元組；core 以它核對期望的版本（§4.14）。
 - 錯誤不會被當成「不存在」：只有作業系統回報不存在（`ENOENT`、`ERROR_FILE_NOT_FOUND` 等）才是 `Missing`（03 C4）。
 
@@ -1314,6 +1330,7 @@ pub enum OpKind {
     Capture, Backup, Create, Replace, Delete, SetMode, CreateDir,    // 目標
     RevertDelete, RevertReplace, RevertCreate, RevertSetMode, RevertRemoveDir, // 回復
     ManifestWrite, LocalWrite, SourceCopy, SourceMoveIn,             // 管理與初始化
+    SourceWithdraw, SourceRemove,                                    // 初始化撤回來源目錄（§4.16 第 5 步）
 }
 ```
 
@@ -1803,21 +1820,27 @@ platform 的實作以 `std::process` 執行 `git clone -- <url> <dest>`：`--` �
 1. 依 `Layout::config_dir` 與 `load_local` 讀取既有的本機設定。來源目錄依序取 `req.source`、本機設定的 `source`、預設位置（§5.1），以 `Layout::with_source` 建立 `Layout`。
 2. 依 §5.2 檢查：三個目錄都不等於 home，彼此的位置鍵沒有 `Same`、`Ancestor` 或 `Descendant` 的關係，路徑中沒有連結。
 3. 準備來源目錄：
-   - 指定了 `repo`：來源目錄的位置不得存在，包括空目錄，否則失敗，不改動任何檔案（FR-INI-009）；空目錄的提示是先刪除它。刪除該位置旁邊殘留的 `.<名稱>.rosamta-tmp.*` 暫存目錄：鎖定保證沒有其他 rosamta 正在使用它們。建立不存在的上層目錄，在同一個目錄以 `CreateDir` 建立暫存目錄，呼叫 `clone_into`，核對暫存目錄與上層仍是建立時的身分，再以 `MoveDir` 移到正式位置（§6.3），同步點為 `SourceMoveIn`。任一步失敗時以 `RemoveTree` 刪除暫存目錄，並刪除本次建立、仍是空的上層目錄，回報 repo 的位址與原因，不建立本機設定（FR-INI-010）。
+   - 指定了 `repo`：來源目錄的位置不得存在，包括空目錄，否則失敗，不改動任何檔案（FR-INI-009）；空目錄的提示是先刪除它。刪除該位置旁邊殘留的 `.<名稱>.rosamta-tmp.*` 暫存目錄：鎖定保證沒有其他 rosamta 正在使用它們。建立不存在的上層目錄，在同一個目錄以 `CreateDir` 建立暫存目錄，呼叫 `clone_into`，核對暫存目錄與上層仍是建立時的身分，以 `list_tree` 記下暫存目錄的清單（第 5 步使用），再以 `MoveDir` 移到正式位置（§6.3），同步點為 `SourceMoveIn`。任一步失敗時以 `list_tree` 取得暫存目錄目前的清單，再以 `RemoveTree` 刪除暫存目錄，並刪除本次建立、仍是空的上層目錄，回報 repo 的位址與原因，不建立本機設定（FR-INI-010）。
    - 沒有指定 `repo`：來源目錄不存在時建立它；`manifest.toml` 不存在時以 `CreateFile` 建立空的 manifest（FR-INI-002）。既有的檔案不改動。
 4. 合併本機設定（FR-INI-008）：以 `TomlEditor` 解析既有的 `local.toml`（不存在時從空文字開始），只修改這次指定的值：
    - `req.source` 有值時，寫入 `source`，以 `~/` 開頭、以 `/` 分隔。
    - `req.tags` 加到既有的 `tags` 之後，略過已有的標籤，不移除任何標籤。
    - `req.values` 的每一項寫入 `[values.<模組>]` 的 `<欄位>`，已有的值被取代。
    原本不存在時以 `CreateFile` 寫入，否則以 `ReplaceFile` 取代，被取代的必須是第 1 步讀到的版本（§6.3）。設定目錄不存在時以 `ensure_private_dir` 建立。同步點為 `LocalWrite`。文字與原文相同時不寫入。
-5. 第 4 步失敗，而第 3 步取得了遠端來源時，把來源目錄移回暫存名稱並刪除，回到初始化之前的狀態，使用者可以直接重試；不這樣做，再次初始化會因 FR-INI-009 而失敗。
+5. 第 4 步失敗，而第 3 步取得了遠端來源時，撤回來源目錄，回到初始化之前的狀態，使用者可以直接重試；不撤回，再次初始化會因 FR-INI-009 而失敗。來源目錄移入正式位置後，其他程式可能已在其中新增或修改檔案，例如發現新目錄就開始同步的工具，撤回不得刪除這些內容：
+   1. 以 `MoveDir` 把來源目錄以不覆蓋的方式改名為新的暫存名稱，同步點為 `SourceWithdraw`。先移開，之後經由正式路徑的修改就不會落在比較之後。
+   2. 以 `list_tree` 走訪，與第 3 步的清單比較（`differences`）。
+   3. 清單相同時，以 `RemoveTree` 刪除，`listing` 是第 3 步的清單，同步點為 `SourceRemove`。`kept` 不是空的時，回報 `init.rollback-kept`，列出保留的項目與暫存名稱的位置。
+   4. 清單不同或走訪失敗時，不刪除任何項目，以 `MoveDir` 移回正式位置，回報 `init.rollback-kept`，列出來源目錄的位置與不同的項目，由使用者確認後自行刪除再重試。移不回時（正式位置已被占用），回報暫存名稱的位置。
+
+   比較包含狀態變更時間：一般程式能把修改時間設回原值，卻無法設定狀態變更時間，所以修改內容後還原修改時間的情況也會被發現。剩下的限制是比較之後到刪除單一項目之間的空窗：`RemoveTree` 逐項核對身分，能發現新增與替換，但同一個檔案在這段空窗內被就地修改時，仍會被刪除（§6.3 的空窗）。
 6. 指定了 `repo` 而且 `req.apply` 有值時，以 `ApplyService::apply` 執行第一次套用（FR-INI-001、FR-INI-011），回報放在 `apply`。沒有指定 `repo` 時不套用（04 §2）。
 
 **前置條件**：已取得鎖定，執行檔已呼叫 `RecoveryManager::clean_stale`。
 
 **後置條件**：
 
-- 取得來源失敗時，來源目錄與本機設定都不存在或維持原狀，沒有寫入任何輸出（FR-INI-010）。
+- 取得來源失敗時，來源目錄與本機設定都不存在或維持原狀，沒有寫入任何輸出（FR-INI-010）。第 5 步保留來源目錄或其中部分項目時，回報它們的位置。
 - 第一次套用沿用一般套用的預檢、drift 與接管的處理，回報與 exit code 都與一般套用相同（FR-INI-011）。套用失敗不撤銷已完成的初始化（03 S6）。
 - `tags` 以加入的方式合併：FR-INI-008 不允許改變這次沒有指定的值，既有的標籤屬於其中。移除標籤要編輯本機設定。
 - 指定的欄位值只檢查名稱的格式；型別與欄位是否存在，由第一次套用或之後的預覽檢查（§4.6 對所有層級檢查）。
@@ -1833,6 +1856,7 @@ platform 的實作以 `std::process` 執行 `git clone -- <url> <dest>`：`--` �
 | `init.git-missing` | 找不到 `git` 執行檔 |
 | `init.stale` | clone 後暫存目錄或上層不是建立時的身分，或移入時正式位置已被占用（A7） |
 | `init.write-failed` | 建立來源目錄、manifest 或本機設定失敗，附作業系統的錯誤 |
+| `init.rollback-kept` | 撤回來源目錄時，其他程式新增或修改了其中的檔案；列出來源目錄的位置與保留的項目（第 5 步） |
 | `init.concurrent-edit` | 本機設定在初始化期間被修改 |
 | `config.mixed-line-endings`、`config.syntax` | 既有的本機設定無法編輯（§4.7） |
 
@@ -2675,6 +2699,8 @@ core 的單元測試不能使用 testkit。testkit 依賴 core；core 的單元�
 
 | 情境 | 04 §5 的時間點 | 同步點 | 預期 |
 | --- | --- | --- | --- |
+| A7 | 本機設定寫入失敗、撤回來源目錄之前，其他程式在來源目錄新增或修改檔案 | `FaultFs` 使本機設定的寫入失敗，再於 `BeforeOperation`（`SourceWithdraw`）改動 | 清單不同，來源目錄移回正式位置，回報 `init.rollback-kept`，改動保留 |
+| A7 | 撤回的清單比較通過後、刪除前 | `BeforeOperation`（`SourceRemove`）新增檔案或替換既有檔案 | 新增與替換的項目及其上層目錄保留，其他刪除，回報 `init.rollback-kept` |
 | A10 | 預檢剛通過 | `AfterPreflight` | 走訪時父目錄的身分不符，不執行操作 |
 | A10 | 最後一次路徑檢查通過，尚未寫入或刪除 | `BeforeOperation`（建立、取代、刪除） | Windows 擋下替換；Linux 與 macOS 的操作落在原目錄，步驟 4 發現後經由 handle 復原（ASM-06） |
 | A10 | 回復的最後一次檢查通過，實際操作前 | `BeforeOperation`（回復的各操作） | 同上；該項保留並回報 |

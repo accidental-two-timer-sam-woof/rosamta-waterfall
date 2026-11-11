@@ -465,6 +465,7 @@ classDiagram
         +inspect(at, content) Result~FileInspection~
         +list_dir(at) Result~DirEntry[]~
         +location_key(at) Result~LocationKey~
+        +list_tree(at) Result~TreeListing~
         +prepare_read(at) Result~Prepared~
         +read_file(at) Result~bytes, Observation~
         +ensure_private_dir(at) Result
@@ -499,6 +500,12 @@ classDiagram
         +result Observation
         +written Option~Version~
         +captured Option~CaptureInfo~
+        +kept Vec~String~
+    }
+    class TreeListing {
+        +root Observation
+        +entries Map~String, TreeEntry~
+        +differences(other) Vec~String~
     }
     class Observation {
         +at HomePath
@@ -573,6 +580,8 @@ classDiagram
     Executed ..> OpOutcome : 產生
     FileSystem ..> Observation : 產生
     FileSystem ..> LocationKey : 產生
+    FileSystem ..> TreeListing : 產生
+    FsOp ..> TreeListing : RemoveTree 依清單刪除
     FileSystem ..> FsError : 失敗時
     FileSystem ..> WriteLock : 寫入時要求
     WriteLock ..> FileSystem : 建立時使用
