@@ -45,7 +45,7 @@ A1–A26 對照 [04 設計分析](../04-design-analysis/design-analysis.md) §5�
 | 平台 | 版本與檔案系統 | 發佈目標與執行環境 |
 | --- | --- | --- |
 | Linux | Ubuntu 24.04 LTS，x86-64，ext4 | `x86_64-unknown-linux-musl`。CI 採 `ubuntu-24.04`，使用一般帳號 |
-| macOS | macOS 15.x，Apple Silicon 與 Intel，APFS | `aarch64-apple-darwin` 與 `x86_64-apple-darwin`。CI 採 `macos-15`，另在 Intel 實機或相符架構的 runner 執行 Intel 版本 |
+| macOS | macOS 15.x，Apple Silicon 與 Intel，APFS | `aarch64-apple-darwin` 與 `x86_64-apple-darwin`。CI 採 `macos-15`。Apple Silicon 實機使用 MacBook Air（Apple M1，`MacBookAir10,1`），Intel 版本在 Intel 實機或相符架構的 runner 執行 |
 | Windows | Windows 11 24H2（build 26100）與 Windows Server 2025（build 26100），x86-64，NTFS | `x86_64-pc-windows-msvc`，建置使用 `-C target-feature=+crt-static`。CI 採 `windows-2025`，以標準使用者分別在開發人員模式開啟、關閉時執行。Windows 11 以相同身分與兩種模式驗收 |
 
 Windows 開發人員模式關閉時，由環境管理者在同一磁碟區預建測試連結，再由標準使用者移入測試目錄。套用及回復均以標準使用者身分執行。大小寫案例分別在可取得的區分與不區分大小寫磁碟區執行。其他檔案系統的用途見 PLAT-04。
