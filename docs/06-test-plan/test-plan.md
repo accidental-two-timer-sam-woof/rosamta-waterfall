@@ -4,7 +4,7 @@
 
 [SRS](../02-srs/srs.md) §3 與附錄 A.3 定義首版範圍，共 117 條 essential 與 23 條 conditional 需求。需求與案例的對照見 [SRS 附錄 A.4](../02-srs/srs.md#a4-測試案例)，測試步驟與預期結果依 [05 詳細設計](../05-detailed-design/detailed-design.md)。
 
-FR-PLN-006 的一致性前提見 05 §12.3，需求驗收仍待確認。
+FR-PLN-006 的前提依 05 §12.3 解讀為計畫的所有輸入都沒有改變。
 
 | 延後功能 | 需求 |
 | --- | --- |
