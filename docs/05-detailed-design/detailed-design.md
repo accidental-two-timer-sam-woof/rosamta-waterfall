@@ -1830,7 +1830,7 @@ platform 的實作以 `std::process` 執行 git。Linux 與 macOS 在子程序 e
 1. 依 `Layout::config_dir` 與 `load_local` 讀取既有的本機設定。來源目錄依序取 `req.source`、本機設定的 `source`、預設位置（§5.1），以 `Layout::with_source` 建立 `Layout`。
 2. 依 §5.2 檢查：三個目錄都不等於 home，彼此的位置鍵沒有 `Same`、`Ancestor` 或 `Descendant` 的關係，路徑中沒有連結。
 3. 準備來源目錄：
-   - 指定了 `repo`：來源目錄的位置不得存在，包括空目錄，否則失敗，不改動任何檔案（FR-INI-009）；空目錄的提示是先刪除它。刪除該位置旁邊殘留的 `.<名稱>.rosamta-tmp.*` 暫存目錄：鎖定保證沒有其他 rosamta 正在使用它們。建立不存在的上層目錄，在同一個目錄以 `CreateDir` 建立暫存目錄，以 `hold_dir` 持有它，到達 `BeforeOperation`（`SourceClone`），呼叫 `clone_into`。`clone_into` 回傳後，不論 git 成功與否，先以 `HeldDir::recheck` 確認路徑仍通往持有的暫存目錄；git 成功時再以 `list_tree` 記下暫存目錄的清單（第 5 步使用），以 `MoveDir` 移到正式位置（§6.3），同步點為 `SourceMoveIn`。`recheck` 失敗時，表示 Linux 或 macOS 上其他程式在 clone 前後搬移或替換了路徑上的目錄，暫存目錄與 git 寫入的檔案可能在 home 外：不刪除它們，回報 `init.stale`，說明 git 寫入的檔案可能位於 home 外（SRS 3.5 節 DC-002 的適用範圍）；git 也失敗時，診斷另附 git 的 exit status 與錯誤訊息。git 失敗時也要先核對，因為暫存目錄可能在 clone 期間被搬到 home 外，git 才失敗，這時刪除暫存目錄會刪到 home 外的檔案。`recheck` 通過，而 git 或之後的步驟失敗時，以 `list_tree` 取得暫存目錄目前的清單，再以 `RemoveTree` 刪除暫存目錄，並刪除本次建立、仍是空的上層目錄，回報 repo 的位址與原因，不建立本機設定（FR-INI-010）。
+   - 指定了 `repo`：來源目錄的位置不得存在，包括空目錄，否則失敗，不改動任何檔案（FR-INI-009）；空目錄的提示是先刪除它。該位置旁邊有 `.<名稱>.rosamta-tmp.*` 的項目時也失敗，不改動任何檔案，回報 `init.staging-exists`，列出它們的位置，由使用者確認內容後自行刪除再重試。這些項目可能是程序中止後的殘留，也可能是先前回報 `init.stale` 或 `init.rollback-kept` 時保留的目錄；從名稱分辨不出來，所以不自動刪除。建立不存在的上層目錄，在同一個目錄以 `CreateDir` 建立暫存目錄，以 `hold_dir` 持有它，到達 `BeforeOperation`（`SourceClone`），呼叫 `clone_into`。`clone_into` 回傳後，不論 git 成功與否，先以 `HeldDir::recheck` 確認路徑仍通往持有的暫存目錄；git 成功時再以 `list_tree` 記下暫存目錄的清單（第 5 步使用），以 `MoveDir` 移到正式位置（§6.3），同步點為 `SourceMoveIn`。`recheck` 失敗時，表示 Linux 或 macOS 上其他程式在 clone 前後搬移或替換了路徑上的目錄，暫存目錄與 git 寫入的檔案可能在 home 外：不刪除它們，回報 `init.stale`，列出暫存目錄原本的位置，說明 git 寫入的檔案可能位於 home 外（SRS 3.5 節 DC-002 的適用範圍）；git 也失敗時，診斷另附 git 的 exit status 與錯誤訊息。git 失敗時也要先核對，因為暫存目錄可能在 clone 期間被搬到 home 外，git 才失敗，這時刪除暫存目錄會刪到 home 外的檔案。`recheck` 通過，而 git 或之後的步驟失敗時，以 `list_tree` 取得暫存目錄目前的清單，再以 `RemoveTree` 刪除暫存目錄，並刪除本次建立、仍是空的上層目錄，回報 repo 的位址與原因，不建立本機設定（FR-INI-010）。
    - 沒有指定 `repo`：來源目錄不存在時建立它；`manifest.toml` 不存在時以 `CreateFile` 建立空的 manifest（FR-INI-002）。既有的檔案不改動。
 4. 合併本機設定（FR-INI-008）：以 `TomlEditor` 解析既有的 `local.toml`（不存在時從空文字開始），只修改這次指定的值：
    - `req.source` 有值時，寫入 `source`，以 `~/` 開頭、以 `/` 分隔。
@@ -1862,6 +1862,7 @@ platform 的實作以 `std::process` 執行 git。Linux 與 macOS 在子程序 e
 | --- | --- |
 | `init.source-exists` | 指定遠端時，來源目錄的位置已存在（FR-INI-009） |
 | `init.layout` | 三個目錄互相包含、等於 home，或路徑中有連結（§5.2） |
+| `init.staging-exists` | 指定遠端時，來源目錄的位置旁邊有 `.<名稱>.rosamta-tmp.*` 的項目；列出它們的位置，不刪除（第 3 步） |
 | `init.clone-failed` | git 回報失敗，而且 `recheck` 通過，附 repo 的位址、git 的 exit status 與錯誤訊息（FR-INI-010） |
 | `init.git-missing` | 找不到 `git` 執行檔 |
 | `init.stale` | clone 結束後，不論 git 成功與否，路徑不再通往持有的暫存目錄（git 寫入的檔案可能位於 home 外，不刪除；git 失敗時另附 git 的 exit status 與錯誤訊息），或移入時正式位置已被占用（A7） |
@@ -2450,6 +2451,7 @@ Windows 的目錄 handle 擋下了改名（ASM-08），步驟 4 是多一層保�
 - 批次中每個暫存檔的名稱，包括 §6.3 交換或移開後指向舊檔的名稱，在建立前先把它在 home 內的相對路徑附加到 `txn/<批次編號>/journal`（每行一筆）。
 - 批次成功或回復結束後，依 journal 刪除仍存在的暫存檔，再刪除整個 `txn/<批次編號>/`。刪除經過 §6.3 的走訪，只刪除名稱含 `.rosamta-tmp.` 的項目，不跟隨連結。§6.3 中移不回原位而保留下來的外部檔案不刪除，回報它的位置。
 - 程序中止後，下一個取得鎖定（§6.7）的指令在規劃之前，依 journal 清理每一個殘留的批次目錄，並在標準錯誤說明該批次沒有正常結束。中止的批次可能已改動部分輸出，但每個輸出都是完整的舊版或新版（REL-001），狀態檔也是（REL-002）。已寫入、狀態卻未提交的輸出，下次規劃時內容符合期望，依 §5.11 只更新紀錄或直接納管；已刪除而未提交的，依「舊檔不存在」只移除紀錄。所以不需要另外的復原步驟。
+- 初始化取得遠端來源時使用的暫存目錄（§6.3）不在自動清理的範圍：它可能是 §4.16 回報 `init.stale` 或 `init.rollback-kept` 時刻意保留的目錄。下次初始化發現它時回報 `init.staging-exists`，由使用者確認後刪除。
 - 預覽與查詢不取得鎖定，也不寫入，所以不清理；發現殘留的批次目錄時，只在標準錯誤提示。
 - 清理失敗只在標準錯誤警告，不改變已提交的結果與 exit code（04 §3.3）。
 
@@ -2722,6 +2724,7 @@ core 的單元測試不能使用 testkit。testkit 依賴 core；core 的單元�
 | A7 | clone 前，暫存目錄的上層被換成指向 home 外的連結 | `BeforeOperation`（`SourceClone`） | Windows 擋下替換，clone 照常完成；Linux 與 macOS 的 clone 寫入持有的暫存目錄，home 外與替代位置都沒有檔案，`recheck` 發現路徑改變，回報 `init.stale`（ASM-22） |
 | A7 | clone 前，暫存目錄的上層被整個搬到 home 外 | `BeforeOperation`（`SourceClone`） | Windows 擋下；Linux 與 macOS 的 clone 寫入搬出去的目錄，`recheck` 發現，回報 `init.stale`，不刪除 home 外的檔案（SRS DC-002） |
 | A7 | clone 前，暫存目錄的上層被整個搬到 home 外，之後 git 失敗 | `BeforeOperation`（`SourceClone`） | Windows 擋下；Linux 與 macOS 在清理暫存目錄之前 `recheck` 發現，回報 `init.stale` 並附 git 的錯誤，不刪除 home 外的檔案（§4.16） |
+| A7 | 回報 `init.stale` 之後，保留的暫存目錄被搬回原位，再次初始化 | 不需要同步點：兩次執行之間搬回 | 回報 `init.staging-exists`，列出暫存目錄的位置；暫存目錄與其中的檔案都還在，沒有建立來源目錄與本機設定（§4.16） |
 | A7 | 下載成功後、移入前，父目錄被換成指向 home 外的連結 | `BeforeOperation`（`SourceMoveIn`） | 同 A10 的第二列，回報 `init.stale`，不建立本機設定 |
 | A7 | 本機設定寫入失敗、撤回來源目錄之前，其他程式在來源目錄新增或修改檔案 | `FaultFs` 使本機設定的寫入失敗，再於 `BeforeOperation`（`SourceWithdraw`）改動 | 清單不同，來源目錄移回正式位置，回報 `init.rollback-kept`，改動保留 |
 | A7 | 撤回的清單比較通過後、刪除前 | `BeforeOperation`（`SourceRemove`）新增檔案或替換既有檔案 | 新增與替換的項目及其上層目錄保留，其他刪除，回報 `init.rollback-kept` |
@@ -2959,6 +2962,7 @@ error[preflight.collision]: outputs "nvim" and "nvim-work" have the same target 
 | `exec.*`、`recovery.*` | 見上方 | — |
 | `init.clone-failed` | repo 的位址、git 的 exit status 與錯誤訊息（FR-INI-010） | — |
 | `init.source-exists` | 來源目錄的位置 | 空目錄：先刪除它；否則以 `--source` 指定其他位置 |
+| `init.staging-exists` | 每個暫存目錄的位置 | 確認內容後刪除它們，或以 `--source` 指定其他位置 |
 
 **色彩**（IF-009）：只在該串流連接終端機（`std::io::IsTerminal`），而且沒有設定 `NO_COLOR` 時，為 `error`、`warning` 與差異的 `+`、`-` 行加上色彩。標準輸出與標準錯誤分別判斷。除此之外，rosamta 不輸出任何控制字元，包括游標控制與進度顯示。
 
