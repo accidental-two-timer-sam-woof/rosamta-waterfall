@@ -2,7 +2,7 @@
 
 ## 1. 範圍與依據
 
-[SRS 1.4](../02-srs/srs.md) §3 與附錄 A.3 定義首版需求與追溯編號。測試步驟和預期結果以 [05 詳細設計](../05-detailed-design/detailed-design.md) 為準，包含 §12.3 對 SRS 驗收條件的解讀。首版納入 117 條 essential 與 23 條 conditional 需求，共 140 條。
+[SRS 1.5](../02-srs/srs.md) §3 與附錄 A.3 定義首版需求與追溯編號。測試步驟和預期結果以 [05 詳細設計](../05-detailed-design/detailed-design.md) 為準，包含 §12.3 對 SRS 驗收條件的解讀。首版納入 117 條 essential 與 23 條 conditional 需求，共 140 條。
 
 | 延後功能 | 需求 |
 | --- | --- |
@@ -15,7 +15,7 @@ A1–A26 對照 [04 設計分析](../04-design-analysis/design-analysis.md) §5�
 
 ### 1.1 儲存庫基準
 
-基準 commit `0f19216` 的 `src/` 與 `tests/` 僅有 `.gitkeep`，產品 CLI 與測試尚未實作。[原型](../../prototypes/pilot/README.md) 由 [pilot workflow](../../.github/workflows/pilot.yml) 執行，跨平台驗證結果見 05 §7.1。
+基準 commit `cc683e7` 的 `src/` 與 `tests/` 僅有 `.gitkeep`，產品 CLI 與測試尚未實作。[原型](../../prototypes/pilot/README.md) 由 [pilot workflow](../../.github/workflows/pilot.yml) 執行，跨平台驗證結果見 05 §7.1。
 
 | 原型 | 已有驗證 | 產品案例 |
 | --- | --- | --- |
