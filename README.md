@@ -1,3 +1,5 @@
+![Rosamta dotfile manager banner](.github/assets/banner.png)
+
 # rosamta
 
 > 專案仍在初期規劃階段，以下內容為設計方向，可能隨開發調整。
