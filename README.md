@@ -1,3 +1,5 @@
+![Rosamta dotfile manager banner](.github/assets/banner.png)
+
 # rosamta
 
 > 首版目前在設計與測試規劃階段。現有程式碼是用於驗證設計的 pilot。
