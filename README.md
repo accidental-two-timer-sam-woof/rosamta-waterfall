@@ -1,5 +1,7 @@
 ![Rosamta dotfile manager banner](.github/assets/banner.png)
 
+[![License](https://img.shields.io/github/license/accidental-two-timer-sam-woof/rosamta-waterfall?style=for-the-badge)](LICENSE)
+
 # rosamta
 
 > 首版目前在設計與測試規劃階段。現有程式碼是用於驗證設計的 pilot。
